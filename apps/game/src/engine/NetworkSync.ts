@@ -498,7 +498,7 @@ export class NetworkSync {
       }
 
       case 'SURRENDER': {
-        const surrenderingTeam = msg.payload?.team as Team;
+        const surrenderingTeam: Team = msg.senderRole === 'HOST' ? 'LEFT' : 'RIGHT';
         this.world.surrender(surrenderingTeam);
         break;
       }

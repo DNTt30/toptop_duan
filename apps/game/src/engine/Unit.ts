@@ -26,6 +26,7 @@ export interface CombatEvent {
   targetUnit?: Unit;
   targetBase?: boolean;
   damage?: number;
+  damageType?: UnitType;
   x: number;
   y: number;
 }
@@ -40,6 +41,7 @@ export class Unit {
 
   public x: number = 0;
   public y: number = 0;
+  public plannedX: number = 0;
   public prevX: number = 0;
   public prevY: number = 0;
   public customWeaponDataUrl: string | null = null;
@@ -121,6 +123,7 @@ export class Unit {
     this.anim = new AnimationController(this.spriteConfig, 'WALK');
     this.team = team;
     this.x = startX;
+    this.plannedX = startX;
     this.baseY = startY;
 
     // Quân bay / drone được nâng cao độ so với mặt đất
@@ -164,7 +167,29 @@ export class Unit {
   }
 
   /**
-   * Cập nhật logic đơn vị mỗi tick
+   * Pha 1: Quyết định (Decision Phase)
+   * Đọc trạng thái đồng minh và kẻ địch đầu tick, tính toán hành động và đòn đánh.
+   * KHÔNG trừ máu hay di chuyển thực tế ở pha này.
+   */
+  public planUpdate(
+    dt: number,
+    allies: readonly Unit[],
+    enemies: readonly Unit[],
+    enemyBaseX: number,
+    onCombatEvent: (event: CombatEvent) => void
+  ): void {
+    this.internalUpdate(dt, allies, enemies, enemyBaseX, onCombatEvent, true);
+  }
+
+  /**
+   * Pha 2: Áp dụng di chuyển đã tính toán đồng thời
+   */
+  public applyPlannedMovement(): void {
+    this.x = this.plannedX;
+  }
+
+  /**
+   * Cập nhật logic đơn vị mỗi tick (tương thích ngược khi gọi trực tiếp)
    */
   public update(
     dt: number,
@@ -173,8 +198,21 @@ export class Unit {
     enemyBaseX: number,
     onCombatEvent: (event: CombatEvent) => void
   ): void {
+    this.internalUpdate(dt, allies, enemies, enemyBaseX, onCombatEvent, false);
+    this.applyPlannedMovement();
+  }
+
+  private internalUpdate(
+    dt: number,
+    allies: readonly Unit[],
+    enemies: readonly Unit[],
+    enemyBaseX: number,
+    onCombatEvent: (event: CombatEvent) => void,
+    deferDamage: boolean
+  ): void {
     this.prevX = this.x;
     this.prevY = this.y;
+    this.plannedX = this.x;
 
     if (!this.isAlive) {
       if (this.state === 'DIE') {
@@ -233,7 +271,7 @@ export class Unit {
       this.state = 'ATTACK';
       const animRes = this.anim.update(dt);
       if (animRes.triggerHitEvent) {
-        this.executeHitEvent(this.pendingAttackTargetUnit, this.pendingAttackTargetBase, onCombatEvent);
+        this.executeHitEvent(this.pendingAttackTargetUnit, this.pendingAttackTargetBase, onCombatEvent, deferDamage);
       }
       if (animRes.attackFinished) {
         const speedMult = this.status.getSpeedMultiplier();
@@ -266,7 +304,7 @@ export class Unit {
         this.startAttackSwing(targetInfo.targetUnit, targetInfo.targetBase);
         const animRes = this.anim.update(dt);
         if (animRes.triggerHitEvent) {
-          this.executeHitEvent(this.pendingAttackTargetUnit, this.pendingAttackTargetBase, onCombatEvent);
+          this.executeHitEvent(this.pendingAttackTargetUnit, this.pendingAttackTargetBase, onCombatEvent, deferDamage);
         }
       } else {
         // Đang chờ hồi chiêu giữa 2 lần đánh: chơi clip IDLE
@@ -289,7 +327,10 @@ export class Unit {
       const actualStepMag = Number.isFinite(targetInfo.minAllyMargin)
         ? Math.min(desiredStepMag, Math.max(0, targetInfo.minAllyMargin))
         : desiredStepMag;
-      this.x += actualStepMag * this.direction;
+      this.plannedX = this.x + actualStepMag * this.direction;
+      if (!deferDamage) {
+        this.x = this.plannedX;
+      }
 
       // Đồng bộ bước chân tránh trượt: Quãng đường di chuyển chia cho cự ly từng frame
       const stridePx = this.spriteConfig?.stridePx || 64;
@@ -335,7 +376,8 @@ export class Unit {
   private executeHitEvent(
     targetUnit: Unit | undefined,
     targetBase: boolean | undefined,
-    onCombatEvent: (event: CombatEvent) => void
+    onCombatEvent: (event: CombatEvent) => void,
+    deferDamage: boolean = false
   ): void {
     this.attackAnimProgress = 1.0;
     const baseDmg = this.config.damage * this.damageMultiplier * this.status.getOutgoingDamageMultiplier();
@@ -369,8 +411,9 @@ export class Unit {
     } else {
       // Đơn vị cận chiến hoặc cung thủ đánh bằng tay khi địch áp sát
       const meleeDmg = switchToHandMelee ? baseDmg * 0.85 : baseDmg;
-      if (targetUnit && targetUnit.isAlive) {
-        targetUnit.takeDamage(meleeDmg, switchToHandMelee ? 'MELEE' : this.config.type, this, onCombatEvent);
+      const dmgType = switchToHandMelee ? 'MELEE' : this.config.type;
+      if (!deferDamage && targetUnit && targetUnit.isAlive) {
+        targetUnit.takeDamage(meleeDmg, dmgType, this, onCombatEvent);
       }
       onCombatEvent({
         type: 'MELEE_HIT',
@@ -378,6 +421,7 @@ export class Unit {
         targetUnit,
         targetBase,
         damage: meleeDmg,
+        damageType: dmgType,
         x: targetUnit ? targetUnit.x : this.x + 35 * this.direction,
         y: this.y,
       });

@@ -26,11 +26,21 @@ import { particleSystem } from './ParticleSystem';
 import { Projectile, ProjectilePool } from './Projectile';
 import { Turret, TurretManager } from './Turret';
 import { type BarrageShellSpec, UltimateManager } from './Ultimate';
-import { Unit } from './Unit';
+import { Unit, type CombatEvent } from './Unit';
 import { UpgradeManager, type UpgradeLevels } from './Upgrades';
 import { getModeMatchConfig, type GameMode, type ModeMatchConfig } from '../data/modes';
 
 export type { GameMode, ModeMatchConfig };
+
+export type WorldCommand =
+  | { team: Team; type: 'SPAWN_UNIT'; config: UnitConfig }
+  | { team: Team; type: 'AGE_UP' }
+  | { team: Team; type: 'UPGRADE_UNIT'; unitType: UnitType }
+  | { team: Team; type: 'UPGRADE_TURRET' }
+  | { team: Team; type: 'ADD_TURRET_SLOT' }
+  | { team: Team; type: 'BUILD_TURRET'; slotIndex: number; config?: TurretConfig }
+  | { team: Team; type: 'SELL_TURRET'; slotIndex: number }
+  | { team: Team; type: 'ULTIMATE' };
 
 export interface FloatingText {
   id: string;
@@ -132,6 +142,10 @@ export class World {
   public screenShake: number = 0;
   public glitchActive: boolean = false;
   public glitchTimer: number = 0;
+
+  // Hàng đợi lệnh điều khiển đồng thời giữa Người chơi và Bot
+  public isUpdating: boolean = false;
+  public commandQueue: WorldCommand[] = [];
 
   // Đăng ký lắng nghe thay đổi trạng thái cho React HUD
   private subscribers: ((snapshot: WorldSnapshot) => void)[] = [];
@@ -253,6 +267,8 @@ export class World {
     this.botTotalDamageDealt = 0;
     this.playerBaseHp = BASE_MAX_HP;
     this.botBaseHp = BASE_MAX_HP;
+    this.commandQueue = [];
+    this.isUpdating = false;
 
     this.playerEconomy.reset();
     this.playerAge.reset(1);
@@ -292,57 +308,41 @@ export class World {
     }
   }
 
-  /**
-   * Bước chạy mô phỏng chính (Fixed Timestep 60Hz)
-   */
-  public update(dt: number): void {
-    if (this.status !== 'PLAYING') {
-      if (this.autoRestartTimer !== null && !this.autoRestartCancelled) {
-        this.autoRestartTimer -= dt;
-        if (this.autoRestartTimer <= 0) {
-          this.autoRestartTimer = null;
-          this.reset();
-          return;
-        }
-      }
-      this.hudNotifyCooldown -= dt;
-      if (this.hudNotifyCooldown <= 0) {
-        this.hudNotifyCooldown = 0.08;
-        this.notifySubscribers();
-      }
-      return;
+  public queueCommand(cmd: WorldCommand): void {
+    this.commandQueue.push(cmd);
+  }
+
+  public processCommandQueue(): void {
+    if (this.commandQueue.length === 0) return;
+    const commands = [...this.commandQueue];
+    this.commandQueue = [];
+    for (const cmd of commands) {
+      this.executeCommand(cmd);
     }
+  }
 
-    this.matchTime += dt;
-
-    // 1. Cập nhật hiệu ứng Glitch và Rung màn hình
-    if (this.glitchTimer > 0) {
-      this.glitchTimer -= dt;
-      if (this.glitchTimer <= 0) {
-        this.glitchActive = false;
-      }
+  public executeCommand(cmd: WorldCommand): boolean {
+    switch (cmd.type) {
+      case 'SPAWN_UNIT':
+        return this.executeSpawnUnit(cmd.team, cmd.config);
+      case 'AGE_UP':
+        return this.executeAgeUp(cmd.team);
+      case 'UPGRADE_UNIT':
+        return this.executeUpgradeUnit(cmd.team, cmd.unitType);
+      case 'UPGRADE_TURRET':
+        return this.executeUpgradeTurret(cmd.team);
+      case 'ADD_TURRET_SLOT':
+        return this.executeAddTurretSlot(cmd.team);
+      case 'BUILD_TURRET':
+        return this.executeBuildTurret(cmd.team, cmd.slotIndex, cmd.config);
+      case 'SELL_TURRET':
+        return this.executeSellTurret(cmd.team, cmd.slotIndex) > 0;
+      case 'ULTIMATE':
+        return this.triggerUltimate(cmd.team);
     }
+  }
 
-    if (this.screenShake > 0) {
-      this.screenShake -= dt * 10;
-      if (this.screenShake < 0) this.screenShake = 0;
-    }
-
-    // 2. Cập nhật Kinh tế & Hàng đợi sản xuất lính
-    const playerCompleted = this.playerEconomy.update(dt);
-    for (const config of playerCompleted) {
-      this.spawnUnit(config, 'LEFT');
-    }
-
-    const botCompleted = this.botEconomy.update(dt);
-    for (const config of botCompleted) {
-      this.spawnUnit(config, 'RIGHT');
-    }
-
-    // 3. Cập nhật Cooldown Tuyệt chiêu & Hàng đợi Mưa Pháo Ngẫu Nhiên
-    this.playerUltimate.update(dt);
-    this.botUltimate.update(dt);
-
+  private updatePendingBarrageShells(dt: number): void {
     for (let i = this.pendingBarrageShells.length - 1; i >= 0; i--) {
       const item = this.pendingBarrageShells[i]!;
       item.timer -= dt;
@@ -371,116 +371,226 @@ export class World {
         this.pendingBarrageShells.splice(i, 1);
       }
     }
+  }
 
-    // 4. Bot AI đưa ra quyết định (chỉ hoạt động trong chế độ Chơi Đơn)
-    if (this.gameMode === 'SOLO') {
-      this.botAI.update(
-        dt,
-        this.botEconomy,
-        this.botAge,
-        this.botTurrets,
-        this.botUltimate,
-        this.botUnits,
-        this.playerUnits,
-        () => this.triggerUltimate('RIGHT'),
-        this.botUpgrades
-      );
-    }
+  private checkBaseDestruction(): void {
+    if (this.status !== 'PLAYING') return;
 
-    // 5. Cập nhật Lính phe Player
-    for (let i = this.playerUnits.length - 1; i >= 0; i--) {
-      const unit = this.playerUnits[i]!;
-      unit.update(
-        dt,
-        this.playerUnits,
-        this.botUnits,
-        this.baseRightX,
-        (evt) => this.handleCombatEvent(evt)
-      );
-
-      // Nếu lính đã chết và hết thời gian fade out -> Xóa khỏi mảng
-      if (!unit.isAlive && unit.deathFadeTimer >= unit.deathDuration) {
-        this.playerUnits.splice(i, 1);
+    if (this.playerBaseHp <= 0 && this.botBaseHp <= 0) {
+      this.playerBaseHp = 0;
+      this.botBaseHp = 0;
+      // Nếu cả hai căn cứ cùng vỡ trong 1 tick, phân định theo tổng sát thương gây ra
+      if (this.playerTotalDamageDealt >= this.botTotalDamageDealt) {
+        this.status = 'VICTORY';
+      } else {
+        this.status = 'DEFEAT';
       }
+      this.endReason = 'BASE_DESTROYED';
+      this.onMatchEnded();
+    } else if (this.playerBaseHp <= 0) {
+      this.playerBaseHp = 0;
+      this.status = 'DEFEAT';
+      this.endReason = 'BASE_DESTROYED';
+      this.onMatchEnded();
+    } else if (this.botBaseHp <= 0) {
+      this.botBaseHp = 0;
+      this.status = 'VICTORY';
+      this.endReason = 'BASE_DESTROYED';
+      this.onMatchEnded();
     }
+  }
 
-    // 6. Cập nhật Lính phe Bot
-    for (let i = this.botUnits.length - 1; i >= 0; i--) {
-      const unit = this.botUnits[i]!;
-      unit.update(
-        dt,
-        this.botUnits,
-        this.playerUnits,
-        this.baseLeftX,
-        (evt) => this.handleCombatEvent(evt)
-      );
-
-      if (!unit.isAlive && unit.deathFadeTimer >= unit.deathDuration) {
-        this.botUnits.splice(i, 1);
+  /**
+   * Bước chạy mô phỏng chính (Fixed Timestep 60Hz) — Vòng lặp 2 Pha Đồng Thời
+   */
+  public update(dt: number): void {
+    if (this.status !== 'PLAYING') {
+      if (this.autoRestartTimer !== null && !this.autoRestartCancelled) {
+        this.autoRestartTimer -= dt;
+        if (this.autoRestartTimer <= 0) {
+          this.autoRestartTimer = null;
+          this.reset();
+          return;
+        }
       }
+      this.hudNotifyCooldown -= dt;
+      if (this.hudNotifyCooldown <= 0) {
+        this.hudNotifyCooldown = 0.08;
+        this.notifySubscribers();
+      }
+      return;
     }
 
-    // 7. Cập nhật Tháp Canh
-    this.playerTurrets.update(dt, this.botUnits, (turret, target) => {
-      this.fireTurretProjectile(turret, target);
-    });
+    this.isUpdating = true;
+    try {
+      this.matchTime += dt;
 
-    this.botTurrets.update(dt, this.playerUnits, (turret, target) => {
-      this.fireTurretProjectile(turret, target);
-    });
+      // 1. Cập nhật hiệu ứng Glitch và Rung màn hình
+      if (this.glitchTimer > 0) {
+        this.glitchTimer -= dt;
+        if (this.glitchTimer <= 0) {
+          this.glitchActive = false;
+        }
+      }
 
-    // 8. Cập nhật Đạn đạo (Projectiles)
-    const activeProjectiles = [...this.projectilePool.getActive()];
-    for (const proj of activeProjectiles) {
-      const hit = proj.update(dt);
-      if (hit) {
+      if (this.screenShake > 0) {
+        this.screenShake -= dt * 10;
+        if (this.screenShake < 0) this.screenShake = 0;
+      }
+
+      // ==========================================================
+      // PHA 0: XỬ LÝ LỆNH ĐỒNG THỜI (COMMAND PHASE)
+      // Các lệnh từ người chơi và bot được xếp hàng đợi và xử lý đồng thời
+      // ==========================================================
+      if (this.gameMode === 'SOLO') {
+        this.botAI.update(
+          dt,
+          this.botEconomy,
+          this.botAge,
+          this.botTurrets,
+          this.botUltimate,
+          this.botUnits,
+          this.playerUnits,
+          () => this.queueCommand({ team: 'RIGHT', type: 'ULTIMATE' }),
+          this.botUpgrades
+        );
+      }
+      this.processCommandQueue();
+
+      // Cập nhật Kinh tế & Sinh lính đã hoàn tất huấn luyện
+      const playerCompleted = this.playerEconomy.update(dt);
+      for (const config of playerCompleted) {
+        this.spawnUnit(config, 'LEFT');
+      }
+
+      const botCompleted = this.botEconomy.update(dt);
+      for (const config of botCompleted) {
+        this.spawnUnit(config, 'RIGHT');
+      }
+
+      // Cập nhật Cooldown Tuyệt chiêu & Hàng đợi Mưa Pháo Ngẫu Nhiên
+      this.playerUltimate.update(dt);
+      this.botUltimate.update(dt);
+      this.updatePendingBarrageShells(dt);
+
+      // ==========================================================
+      // PHA 1: PHA QUYẾT ĐỊNH (DECISION PHASE)
+      // Cả hai phe cùng đọc trạng thái tại đầu tick.
+      // KHÔNG trừ máu hay di chuyển thực tế ở pha này.
+      // ==========================================================
+      const queuedCombatEvents: CombatEvent[] = [];
+      const onCombatIntent = (evt: CombatEvent) => {
+        queuedCombatEvents.push(evt);
+      };
+
+      const playerSnapshot = [...this.playerUnits];
+      const botSnapshot = [...this.botUnits];
+
+      // Đơn vị hai bên cùng tính toán hành động dựa trên snapshot đầu tick
+      for (let i = 0; i < playerSnapshot.length; i++) {
+        playerSnapshot[i]!.planUpdate(
+          dt,
+          playerSnapshot,
+          botSnapshot,
+          this.baseRightX,
+          onCombatIntent
+        );
+      }
+
+      for (let i = 0; i < botSnapshot.length; i++) {
+        botSnapshot[i]!.planUpdate(
+          dt,
+          botSnapshot,
+          playerSnapshot,
+          this.baseLeftX,
+          onCombatIntent
+        );
+      }
+
+      // Tháp canh hai phe cùng quét mục tiêu và lên kế hoạch khai hỏa
+      const queuedTurretShots: { turret: Turret; target: Unit }[] = [];
+      this.playerTurrets.update(dt, botSnapshot, (turret, target) => {
+        queuedTurretShots.push({ turret, target });
+      });
+      this.botTurrets.update(dt, playerSnapshot, (turret, target) => {
+        queuedTurretShots.push({ turret, target });
+      });
+
+      // Đạn đạo di chuyển và xác định va chạm
+      const activeProjectiles = [...this.projectilePool.getActive()];
+      const impactingProjectiles: Projectile[] = [];
+      for (const proj of activeProjectiles) {
+        const hit = proj.update(dt);
+        if (hit) {
+          impactingProjectiles.push(proj);
+        }
+      }
+
+      // ==========================================================
+      // PHA 2: PHA THỰC THI (EXECUTION PHASE)
+      // Áp dụng đồng thời di chuyển, sát thương, xóa quân chết, cộng vàng/XP.
+      // Nếu hai quân cùng đánh nhau chết trong tick này, CẢ HAI CÙNG CHẾT.
+      // ==========================================================
+
+      // 2.1. Áp dụng đồng thời di chuyển đã lên kế hoạch
+      for (let i = 0; i < this.playerUnits.length; i++) {
+        this.playerUnits[i]!.applyPlannedMovement();
+      }
+      for (let i = 0; i < this.botUnits.length; i++) {
+        this.botUnits[i]!.applyPlannedMovement();
+      }
+
+      // 2.2. Khai hỏa đạn tháp canh
+      for (const ts of queuedTurretShots) {
+        this.fireTurretProjectile(ts.turret, ts.target);
+      }
+
+      // 2.3. Giải quyết toàn bộ đòn đánh và sát thương cận chiến / tầm xa của lính
+      for (const evt of queuedCombatEvents) {
+        this.handleCombatEvent(evt);
+      }
+
+      // 2.4. Giải quyết va chạm đạn đạo
+      for (const proj of impactingProjectiles) {
         this.handleProjectileImpact(proj);
         this.projectilePool.release(proj);
       }
-    }
 
-    // 9. Cập nhật Chữ bay (Floating Text)
-    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
-      const ft = this.floatingTexts[i]!;
-      ft.duration += dt;
-      ft.y += ft.vy * dt;
-      if (ft.duration >= ft.maxDuration) {
-        this.floatingTexts.splice(i, 1);
-      }
-    }
-
-    // 10. Kiểm tra Điều Kiện Thắng / Thua (Căn cứ bị phá hủy)
-    if (this.status === 'PLAYING') {
-      if (this.playerBaseHp <= 0 && this.botBaseHp <= 0) {
-        this.playerBaseHp = 0;
-        this.botBaseHp = 0;
-        // Nếu cả hai căn cứ cùng vỡ trong 1 tick, phân định theo tổng sát thương gây ra
-        if (this.playerTotalDamageDealt >= this.botTotalDamageDealt) {
-          this.status = 'VICTORY';
-        } else {
-          this.status = 'DEFEAT';
+      // 2.5. Cập nhật Chữ bay (Floating Text)
+      for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+        const ft = this.floatingTexts[i]!;
+        ft.duration += dt;
+        ft.y += ft.vy * dt;
+        if (ft.duration >= ft.maxDuration) {
+          this.floatingTexts.splice(i, 1);
         }
-        this.endReason = 'BASE_DESTROYED';
-        this.onMatchEnded();
-      } else if (this.playerBaseHp <= 0) {
-        this.playerBaseHp = 0;
-        this.status = 'DEFEAT';
-        this.endReason = 'BASE_DESTROYED';
-        this.onMatchEnded();
-      } else if (this.botBaseHp <= 0) {
-        this.botBaseHp = 0;
-        this.status = 'VICTORY';
-        this.endReason = 'BASE_DESTROYED';
-        this.onMatchEnded();
       }
-    }
 
-    // 11. Giới hạn tần suất re-render của React HUD (Throttle ~12.5 FPS / 80ms)
-    // Tách rời hoàn toàn khỏi vòng lặp 60 FPS của Canvas, triệt tiêu giật lag DOM
-    this.hudNotifyCooldown -= dt;
-    if (this.hudNotifyCooldown <= 0 || this.status !== 'PLAYING') {
-      this.hudNotifyCooldown = 0.08;
-      this.notifySubscribers();
+      // 2.6. Xóa quân đã chết và hết thời gian fade out
+      for (let i = this.playerUnits.length - 1; i >= 0; i--) {
+        const unit = this.playerUnits[i]!;
+        if (!unit.isAlive && unit.deathFadeTimer >= unit.deathDuration) {
+          this.playerUnits.splice(i, 1);
+        }
+      }
+      for (let i = this.botUnits.length - 1; i >= 0; i--) {
+        const unit = this.botUnits[i]!;
+        if (!unit.isAlive && unit.deathFadeTimer >= unit.deathDuration) {
+          this.botUnits.splice(i, 1);
+        }
+      }
+
+      // 2.7. Kiểm tra Điều Kiện Thắng / Thua (Căn cứ bị phá hủy)
+      this.checkBaseDestruction();
+
+      // Giới hạn tần suất re-render của React HUD (~80ms)
+      this.hudNotifyCooldown -= dt;
+      if (this.hudNotifyCooldown <= 0 || this.status !== 'PLAYING') {
+        this.hudNotifyCooldown = 0.08;
+        this.notifySubscribers();
+      }
+    } finally {
+      this.isUpdating = false;
     }
   }
 
@@ -497,6 +607,23 @@ export class World {
           particleSystem.spawnHitSparks(evt.x, evt.y);
         }
         // Chi tiết bằng code: Rung màn hình khi Tank cận chiến đập trúng
+        if (evt.sourceUnit?.config.type === 'TANK') {
+          this.screenShake = Math.max(this.screenShake, 4.5);
+        }
+        this.addFloatingText(`-${Math.round(evt.damage)}`, evt.x, evt.y - 20, 0xf87171);
+        if (evt.targetUnit && evt.targetUnit.isAlive) {
+          const dmgType = evt.damageType || evt.sourceUnit?.config.type || 'MELEE';
+          evt.targetUnit.takeDamage(evt.damage, dmgType, evt.sourceUnit, (e: any) => this.handleCombatEvent(e));
+        } else if (evt.targetBase || !evt.targetUnit) {
+          if (evt.sourceUnit.team === 'LEFT') {
+            this.botBaseHp -= evt.damage;
+            this.recordDamage(evt.damage, 'LEFT');
+          } else {
+            this.playerBaseHp -= evt.damage;
+            this.recordDamage(evt.damage, 'RIGHT');
+          }
+        }
+        break;
         if (evt.sourceUnit?.config.type === 'TANK') {
           this.screenShake = Math.max(this.screenShake, 4.5);
         }
@@ -760,26 +887,34 @@ export class World {
   }
 
   // ==========================================
-  // HÀNH ĐỘNG TỪ NGƯỜI CHƠI / GIAO DIỆN
+  // THỰC THI LỆNH ĐỒNG THỜI (COMMAND EXECUTION)
   // ==========================================
 
-  public spawnPlayerUnit(unitConfig: UnitConfig): boolean {
-    if (this.playerUnits.length >= MAX_UNITS_PER_TEAM) return false;
-    return this.playerEconomy.enqueueUnit(unitConfig);
+  public executeSpawnUnit(team: Team, unitConfig: UnitConfig): boolean {
+    const list = team === 'LEFT' ? this.playerUnits : this.botUnits;
+    const eco = team === 'LEFT' ? this.playerEconomy : this.botEconomy;
+    if (list.length >= MAX_UNITS_PER_TEAM) return false;
+    return eco.enqueueUnit(unitConfig);
   }
 
-  public ageUpPlayer(): boolean {
-    if (this.playerEconomy.canAgeUp(this.playerAge.currentAge)) {
-      if (this.playerAge.advanceAge()) {
-        this.playerEconomy.setAge(this.playerAge.currentAge);
-        // Khi lên kỷ nguyên, giữ lại 50% số cấp cũ (làm tròn xuống)
-        this.playerUpgrades.onAgeAdvance();
-        this.playerTurrets.setUpgradeMultipliers(
-          this.playerUpgrades.getTurretDamageMultiplier(),
-          this.playerUpgrades.getTurretRangeMultiplier()
+  public executeAgeUp(team: Team): boolean {
+    const eco = team === 'LEFT' ? this.playerEconomy : this.botEconomy;
+    const ageMgr = team === 'LEFT' ? this.playerAge : this.botAge;
+    const upg = team === 'LEFT' ? this.playerUpgrades : this.botUpgrades;
+    const turrets = team === 'LEFT' ? this.playerTurrets : this.botTurrets;
+    const baseTextX = team === 'LEFT' ? this.baseLeftX + 50 : this.baseRightX - 50;
+    const textColor = team === 'LEFT' ? 0xfacc15 : 0xf87171;
+
+    if (eco.canAgeUp(ageMgr.currentAge)) {
+      if (ageMgr.advanceAge()) {
+        eco.setAge(ageMgr.currentAge);
+        upg.onAgeAdvance();
+        turrets.setUpgradeMultipliers(
+          upg.getTurretDamageMultiplier(),
+          upg.getTurretRangeMultiplier()
         );
         if (!this.isHeadless) audioSynth.playAgeUp();
-        this.addFloatingText('AGE UPGRADE!', this.baseLeftX + 50, 440, 0xfacc15);
+        this.addFloatingText('AGE UPGRADE!', baseTextX, 440, textColor);
         this.notifySubscribers();
         return true;
       }
@@ -787,79 +922,160 @@ export class World {
     return false;
   }
 
-  public upgradePlayerUnit(type: UnitType): boolean {
-    const success = this.playerUpgrades.upgradeUnit(
-      type,
-      this.playerEconomy,
-      this.playerAge.currentAge,
-      this.playerUnits
-    );
+  public executeUpgradeUnit(team: Team, type: UnitType): boolean {
+    const upg = team === 'LEFT' ? this.playerUpgrades : this.botUpgrades;
+    const eco = team === 'LEFT' ? this.playerEconomy : this.botEconomy;
+    const ageMgr = team === 'LEFT' ? this.playerAge : this.botAge;
+    const units = team === 'LEFT' ? this.playerUnits : this.botUnits;
+    const baseTextX = team === 'LEFT' ? this.baseLeftX + 60 : this.baseRightX - 60;
+    const textColor = team === 'LEFT' ? 0x38bdf8 : 0xf87171;
+
+    const success = upg.upgradeUnit(type, eco, ageMgr.currentAge, units);
     if (success) {
-      const lvl = this.playerUpgrades.getUnitLevel(type);
+      const lvl = upg.getUnitLevel(type);
       if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`UPGRADE ${type} LV${lvl}!`, this.baseLeftX + 60, 430, 0x38bdf8);
+      this.addFloatingText(`UPGRADE ${type} LV${lvl}!`, baseTextX, 430, textColor);
       this.notifySubscribers();
     }
     return success;
   }
 
-  public upgradePlayerTurret(): boolean {
-    const success = this.playerUpgrades.upgradeTurret(
-      this.playerEconomy,
-      this.playerAge.currentAge,
-      this.playerTurrets
-    );
+  public executeUpgradeTurret(team: Team): boolean {
+    const upg = team === 'LEFT' ? this.playerUpgrades : this.botUpgrades;
+    const eco = team === 'LEFT' ? this.playerEconomy : this.botEconomy;
+    const ageMgr = team === 'LEFT' ? this.playerAge : this.botAge;
+    const turrets = team === 'LEFT' ? this.playerTurrets : this.botTurrets;
+    const baseTextX = team === 'LEFT' ? this.baseLeftX + 60 : this.baseRightX - 60;
+    const textColor = team === 'LEFT' ? 0x4ade80 : 0xf87171;
+
+    const success = upg.upgradeTurret(eco, ageMgr.currentAge, turrets);
     if (success) {
-      const lvl = this.playerUpgrades.turretLevel;
+      const lvl = upg.turretLevel;
       if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`TURRET UPGRADE LV${lvl}!`, this.baseLeftX + 60, 410, 0x4ade80);
+      this.addFloatingText(`TURRET UPGRADE LV${lvl}!`, baseTextX, 410, textColor);
       this.notifySubscribers();
     }
     return success;
+  }
+
+  public executeAddTurretSlot(team: Team): boolean {
+    const turrets = team === 'LEFT' ? this.playerTurrets : this.botTurrets;
+    const ageMgr = team === 'LEFT' ? this.playerAge : this.botAge;
+    const eco = team === 'LEFT' ? this.playerEconomy : this.botEconomy;
+    const baseTextX = team === 'LEFT' ? this.baseLeftX + 60 : this.baseRightX - 60;
+    const textColor = team === 'LEFT' ? 0xa855f7 : 0xf87171;
+
+    if (!turrets.canAddSlot()) return false;
+    const cost = UPGRADE_CONFIG.getAddSlotCost(turrets.slots.length, ageMgr.currentAge);
+    if (!eco.spendGold(cost)) return false;
+
+    if (turrets.addSlot()) {
+      if (!this.isHeadless) audioSynth.playUpgrade();
+      this.addFloatingText(`+1 TURRET SLOT!`, baseTextX, 390, textColor);
+      this.notifySubscribers();
+      return true;
+    }
+    return false;
+  }
+
+  public executeBuildTurret(team: Team, slotIndex: number, config?: TurretConfig): boolean {
+    const turrets = team === 'LEFT' ? this.playerTurrets : this.botTurrets;
+    const ageMgr = team === 'LEFT' ? this.playerAge : this.botAge;
+    const eco = team === 'LEFT' ? this.playerEconomy : this.botEconomy;
+    const baseTextX = team === 'LEFT' ? this.baseLeftX + 50 : this.baseRightX - 50;
+
+    const turretConfig = config || ageMgr.getConfig().turrets[0];
+    if (!turretConfig) return false;
+    if (slotIndex < 0 || slotIndex >= turrets.slots.length) return false;
+    if (turrets.slots[slotIndex] !== null) return false;
+    if (!eco.spendGold(turretConfig.cost)) return false;
+
+    if (turrets.buildTurret(slotIndex, turretConfig)) {
+      if (!this.isHeadless) audioSynth.playUpgrade();
+      this.addFloatingText(`-${turretConfig.cost}G`, baseTextX, 420, 0xef4444);
+      this.notifySubscribers();
+      return true;
+    }
+    return false;
+  }
+
+  public executeSellTurret(team: Team, slotIndex: number): number {
+    const turrets = team === 'LEFT' ? this.playerTurrets : this.botTurrets;
+    const eco = team === 'LEFT' ? this.playerEconomy : this.botEconomy;
+    const baseTextX = team === 'LEFT' ? this.baseLeftX + 50 : this.baseRightX - 50;
+
+    const refund = turrets.sellTurret(slotIndex);
+    if (refund > 0) {
+      eco.addGold(refund);
+      if (!this.isHeadless) audioSynth.playUpgrade();
+      this.addFloatingText(`+${refund}G`, baseTextX, 420, 0xfacc15);
+      this.notifySubscribers();
+    }
+    return refund;
+  }
+
+  // ==========================================
+  // HÀNH ĐỘNG TỪ NGƯỜI CHƠI / GIAO DIỆN (PHE TRÁI)
+  // ==========================================
+
+  public spawnPlayerUnit(unitConfig: UnitConfig): boolean {
+    if (this.playerUnits.length >= MAX_UNITS_PER_TEAM) return false;
+    if (!this.playerEconomy.canAfford(unitConfig.cost)) return false;
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'LEFT', type: 'SPAWN_UNIT', config: unitConfig });
+      return true;
+    }
+    return this.executeSpawnUnit('LEFT', unitConfig);
+  }
+
+  public ageUpPlayer(): boolean {
+    if (!this.playerEconomy.canAgeUp(this.playerAge.currentAge)) return false;
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'LEFT', type: 'AGE_UP' });
+      return true;
+    }
+    return this.executeAgeUp('LEFT');
+  }
+
+  public upgradePlayerUnit(type: UnitType): boolean {
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'LEFT', type: 'UPGRADE_UNIT', unitType: type });
+      return true;
+    }
+    return this.executeUpgradeUnit('LEFT', type);
+  }
+
+  public upgradePlayerTurret(): boolean {
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'LEFT', type: 'UPGRADE_TURRET' });
+      return true;
+    }
+    return this.executeUpgradeTurret('LEFT');
   }
 
   public addPlayerTurretSlot(): boolean {
     if (!this.playerTurrets.canAddSlot()) return false;
-    const cost = UPGRADE_CONFIG.getAddSlotCost(
-      this.playerTurrets.slots.length,
-      this.playerAge.currentAge
-    );
-    if (!this.playerEconomy.spendGold(cost)) return false;
-
-    if (this.playerTurrets.addSlot()) {
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`+1 TURRET SLOT!`, this.baseLeftX + 60, 390, 0xa855f7);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'LEFT', type: 'ADD_TURRET_SLOT' });
       return true;
     }
-    return false;
+    return this.executeAddTurretSlot('LEFT');
   }
 
   public buildPlayerTurret(slotIndex: number, config?: TurretConfig): boolean {
-    const turretConfig = config || this.playerAge.getConfig().turrets[0];
-    if (!turretConfig) return false;
-    if (slotIndex < 0 || slotIndex >= this.playerTurrets.slots.length) return false;
-    if (this.playerTurrets.slots[slotIndex] !== null) return false;
-    if (!this.playerEconomy.spendGold(turretConfig.cost)) return false;
-
-    if (this.playerTurrets.buildTurret(slotIndex, turretConfig)) {
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`-${turretConfig.cost}G`, this.baseLeftX + 50, 420, 0xef4444);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'LEFT', type: 'BUILD_TURRET', slotIndex, config });
       return true;
     }
-    return false;
+    return this.executeBuildTurret('LEFT', slotIndex, config);
   }
 
   public sellPlayerTurret(slotIndex: number): number {
-    const refund = this.playerTurrets.sellTurret(slotIndex);
-    if (refund > 0) {
-      this.playerEconomy.addGold(refund);
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`+${refund}G`, this.baseLeftX + 50, 420, 0xfacc15);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'LEFT', type: 'SELL_TURRET', slotIndex });
+      return 1;
     }
-    return refund;
+    return this.executeSellTurret('LEFT', slotIndex);
   }
 
   public setPlayerAge(ageId: number): void {
@@ -879,100 +1095,62 @@ export class World {
 
   public spawnRightUnit(unitConfig: UnitConfig): boolean {
     if (this.botUnits.length >= MAX_UNITS_PER_TEAM) return false;
-    return this.botEconomy.enqueueUnit(unitConfig);
+    if (!this.botEconomy.canAfford(unitConfig.cost)) return false;
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'RIGHT', type: 'SPAWN_UNIT', config: unitConfig });
+      return true;
+    }
+    return this.executeSpawnUnit('RIGHT', unitConfig);
   }
 
   public ageUpRight(): boolean {
-    if (this.botEconomy.canAgeUp(this.botAge.currentAge)) {
-      if (this.botAge.advanceAge()) {
-        this.botEconomy.setAge(this.botAge.currentAge);
-        this.botUpgrades.onAgeAdvance();
-        this.botTurrets.setUpgradeMultipliers(
-          this.botUpgrades.getTurretDamageMultiplier(),
-          this.botUpgrades.getTurretRangeMultiplier()
-        );
-        if (!this.isHeadless) audioSynth.playAgeUp();
-        this.addFloatingText('AGE UPGRADE!', this.baseRightX - 50, 440, 0xf87171);
-        this.notifySubscribers();
-        return true;
-      }
+    if (!this.botEconomy.canAgeUp(this.botAge.currentAge)) return false;
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'RIGHT', type: 'AGE_UP' });
+      return true;
     }
-    return false;
+    return this.executeAgeUp('RIGHT');
   }
 
   public upgradeRightUnit(type: UnitType): boolean {
-    const success = this.botUpgrades.upgradeUnit(
-      type,
-      this.botEconomy,
-      this.botAge.currentAge,
-      this.botUnits
-    );
-    if (success) {
-      const lvl = this.botUpgrades.getUnitLevel(type);
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`UPGRADE ${type} LV${lvl}!`, this.baseRightX - 60, 430, 0xf87171);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'RIGHT', type: 'UPGRADE_UNIT', unitType: type });
+      return true;
     }
-    return success;
+    return this.executeUpgradeUnit('RIGHT', type);
   }
 
   public upgradeRightTurret(): boolean {
-    const success = this.botUpgrades.upgradeTurret(
-      this.botEconomy,
-      this.botAge.currentAge,
-      this.botTurrets
-    );
-    if (success) {
-      const lvl = this.botUpgrades.turretLevel;
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`TURRET UPGRADE LV${lvl}!`, this.baseRightX - 60, 410, 0xf87171);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'RIGHT', type: 'UPGRADE_TURRET' });
+      return true;
     }
-    return success;
+    return this.executeUpgradeTurret('RIGHT');
   }
 
   public addRightTurretSlot(): boolean {
     if (!this.botTurrets.canAddSlot()) return false;
-    const cost = UPGRADE_CONFIG.getAddSlotCost(
-      this.botTurrets.slots.length,
-      this.botAge.currentAge
-    );
-    if (!this.botEconomy.spendGold(cost)) return false;
-
-    if (this.botTurrets.addSlot()) {
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`+1 TURRET SLOT!`, this.baseRightX - 60, 390, 0xf87171);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'RIGHT', type: 'ADD_TURRET_SLOT' });
       return true;
     }
-    return false;
+    return this.executeAddTurretSlot('RIGHT');
   }
 
   public buildRightTurret(slotIndex: number, config?: TurretConfig): boolean {
-    const turretConfig = config || this.botAge.getConfig().turrets[0];
-    if (!turretConfig) return false;
-    if (slotIndex < 0 || slotIndex >= this.botTurrets.slots.length) return false;
-    if (this.botTurrets.slots[slotIndex] !== null) return false;
-    if (!this.botEconomy.spendGold(turretConfig.cost)) return false;
-
-    if (this.botTurrets.buildTurret(slotIndex, turretConfig)) {
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`-${turretConfig.cost}G`, this.baseRightX - 50, 420, 0xef4444);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'RIGHT', type: 'BUILD_TURRET', slotIndex, config });
       return true;
     }
-    return false;
+    return this.executeBuildTurret('RIGHT', slotIndex, config);
   }
 
   public sellRightTurret(slotIndex: number): number {
-    const refund = this.botTurrets.sellTurret(slotIndex);
-    if (refund > 0) {
-      this.botEconomy.addGold(refund);
-      if (!this.isHeadless) audioSynth.playUpgrade();
-      this.addFloatingText(`+${refund}G`, this.baseRightX - 50, 420, 0xfacc15);
-      this.notifySubscribers();
+    if (this.isUpdating) {
+      this.queueCommand({ team: 'RIGHT', type: 'SELL_TURRET', slotIndex });
+      return 1;
     }
-    return refund;
+    return this.executeSellTurret('RIGHT', slotIndex);
   }
 
   public syncNotify(): void {
