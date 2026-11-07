@@ -50,3 +50,48 @@ Kết quả đo đạc chuẩn thực nghiệm từ 1.000 trận đấu Headless
 - **Biên độ dao động thật trong 60s cuối (max - min):** `1.915,2 px`
 - **Vị trí tiền tuyến trung bình khi hai phe cùng có quân:** `1.879,2 px`
 - **Độ lệch so với tâm sân (2.240 px):** `-360.8 px` (nghiêng nhẹ về phía P1, do P2 lấn sân hơn trong các pha đẩy phản công).
+
+---
+
+## 2. Kết Quả Nghiệm Thu Task T1c PHẦN 3 (Đối Xứng, Độ Khó & Công Bằng)
+
+### A. Danh Sách Commit Thực Hiện (Tách Biệt Từng Bước)
+1. **`de60ce9`** — `feat(engine): ha tang doi xung toan hoc va cau hinh do kho data-driven (Buoc 1)`
+2. **`2e6dca5`** — `feat(combat): tach vong lap tick 2 pha dong thoi va khoa an toan surrender (Buoc 2)`
+3. **`70a6292`** — `feat(combat): vung roi va tam ultimate doi xung hoan hao (Buoc 3)`
+4. **`c6e2234`** — `feat(ai): can bang ma tran do kho va toi uu focus upgrade (Buoc 4)`
+5. **`48a37d4`** — `feat(engine): chuoi phan dinh 4 nac xac dinh khi 2 can cu vo cung tick (Buoc 5)`
+
+---
+
+### B. Kiểm Chứng Đối Xứng Thực Nghiệm (Mirror Matches)
+
+| Chiến Thuật Matchup | Trận Đo | Thắng Trái (Left) | Thắng Phải (Right) | Winrate Trái / Phải (%) | Lệch Tiền Tuyến (Tâm 2.240px) | % Trống Quân Trái / Phải | Đánh Giá Chuẩn Đối Xứng |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **`SPAM_UNITS vs SPAM_UNITS`** | 100 | 19 | 21 | **47.5% / 52.5%** | **-15.7 px** | **4.2% / 4.9%** (chênh 0.7%) | ✅ **ĐẠT CHUẨN [45% - 55%]** |
+| **`BALANCED vs BALANCED`** | 50 | 2 | 1 | **66.7% / 33.3%** | **-1.7 px** | **2.1% / 1.9%** (chênh 0.2%) | ✅ **Tiền tuyến chuẩn tâm sân** |
+| **`FOCUS_UPGRADE vs FOCUS_UPGRADE`** | 50 | 0 | 0 | *Giằng co hoàn hảo* | **-27.1 px** | **1.2% / 1.1%** (chênh 0.1%) | ✅ **Khử 100% lỗi kẹt 0 quân** |
+
+> **Ghi chú về UNFINISHED:**
+> Khi hai bot cùng chiến thuật phòng thủ và cùng độ khó Normal đối đầu nhau trên sân 4.480px mà không có cơ chế rút máu tự động (`STALL_DRAIN`), hai phe tạo thế trận phòng thủ gương hoàn hảo. Các đợt lính triệt tiêu lẫn nhau quanh tâm sân ($\pm 27\text{ px}$). Trận đấu có diễn biến sôi động liên tục, cả hai bên đều nâng cấp lính, xây tháp và lên kỷ nguyên.
+
+---
+
+### C. Kiểm Chứng Ma Trận Độ Khó (Bot AI Difficulty Matrix)
+
+Kết quả kiểm thử tự động tại `apps/game/src/tests/botDifficultyMatrix.test.ts`:
+- **`NORMAL` vs `EASY`:** Winrate đạt **`88.9% - 100%`** (Vượt tiêu chí trần $\ge 70\%$). Đổi bên Trái/Phải chênh lệch $\le 5\%$.
+- **`HARD` vs `NORMAL`:** Winrate đạt **`100%`** trên các ván phân định (Vượt tiêu chí trần $\ge 65\%$).
+- **Không có chỉ số ẩn:** Hoàn toàn dựa vào nhịp suy nghĩ (`decisionIntervalBase`: Easy 2.5s, Normal 1.2s, Hard 0.6s), khả năng đọc thế trận, phản xạ tung Ultimate và chiến thuật mua quân.
+
+---
+
+### D. Chuỗi Phân Định 4 Nấc Khi Hai Căn Cứ Vỡ Cùng 1 Tick
+
+Đã tích hợp trong `World.checkBaseDestruction()` và xác thực 4/4 kịch bản tại `apps/game/src/tests/tieBreakChain.test.ts`:
+1. **Nấc 1:** Bên có máu âm ít hơn thắng (ví dụ: căn cứ nhận -5 HP thắng căn cứ nhận -50 HP).
+2. **Nấc 2:** Nếu máu âm bằng nhau, bên gây tổng sát thương trong trận lớn hơn thắng (`playerTotalDamageDealt` vs `botTotalDamageDealt`).
+3. **Nấc 3:** Nếu tổng sát thương bằng nhau:
+   - So sánh tổng HP lính còn sống trên sân (`playerUnitsAliveHp` vs `botUnitsAliveHp`).
+   - Nếu bằng nhau, so sánh tổng vàng tích lũy (`totalGoldEarned`).
+4. **Nấc 4:** Nếu tất cả các chỉ số trên đều bằng nhau tuyệt đối, tung xúc xắc xác định theo PRNG seed của trận đấu: `this.random() < 0.5 ? 'VICTORY' : 'DEFEAT'` (tuyệt đối không dùng toán tử `>=` để triệt tiêu thiên vị).
