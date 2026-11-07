@@ -175,7 +175,7 @@ export function runSingleMatch(
         winner,
         durationSeconds: world.matchTime,
         endReason: world.endReason || 'BASE_DESTROYED',
-        wasStalled: world.hasEverStalled,
+        wasStalled: false,
         leftAge: world.playerAge.currentAge,
         rightAge: world.botAge.currentAge,
         leftGoldEarned: world.playerEconomy.totalGoldEarned,
@@ -222,7 +222,7 @@ export function runSingleMatch(
     winner: 'DRAW',
     durationSeconds: world.matchTime,
     endReason: 'UNFINISHED',
-    wasStalled: world.hasEverStalled,
+    wasStalled: false,
     leftAge: world.playerAge.currentAge,
     rightAge: world.botAge.currentAge,
     leftGoldEarned: world.playerEconomy.totalGoldEarned,
@@ -310,9 +310,8 @@ export function runSimulationSuite(customOptions?: Partial<SimOptions>): MatchMe
   // 2. Thống kê theo lý do kết thúc trận (endReason)
   const reasonCounts: Record<MatchEndReason, number> = {
     BASE_DESTROYED: 0,
-    STALL_DRAIN: 0,
-    TIMEOUT: 0,
-    DRAW: 0,
+    SURRENDER: 0,
+    ADMIN_END: 0,
     UNFINISHED: 0,
   };
   let drawsCount = 0;
@@ -392,11 +391,10 @@ export function runSimulationSuite(customOptions?: Partial<SimOptions>): MatchMe
 
   console.log(`🏁 PHÂN TÍCH LÝ DO KẾT THÚC TRẬN (END REASON):`);
   console.log(`- BASE_DESTROYED (Căn cứ bị phá):  ${((reasonCounts.BASE_DESTROYED / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.BASE_DESTROYED}/${options.totalMatches} trận)`);
-  console.log(`- STALL_DRAIN (Rút cạn bế tắc):   ${((reasonCounts.STALL_DRAIN / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.STALL_DRAIN}/${options.totalMatches} trận)`);
-  console.log(`- TIMEOUT (Hết giờ theo luật):    ${((reasonCounts.TIMEOUT / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.TIMEOUT}/${options.totalMatches} trận)`);
-  console.log(`- DRAW (Hòa kết thúc):            ${((reasonCounts.DRAW / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.DRAW}/${options.totalMatches} trận)`);
+  console.log(`- SURRENDER (Đầu hàng):             ${((reasonCounts.SURRENDER / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.SURRENDER}/${options.totalMatches} trận)`);
+  console.log(`- ADMIN_END (Quản trị kết thúc):    ${((reasonCounts.ADMIN_END / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.ADMIN_END}/${options.totalMatches} trận)`);
   console.log(`- UNFINISHED (Chưa xong tại ${options.maxSeconds}s): ${((reasonCounts.UNFINISHED / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.UNFINISHED}/${options.totalMatches} trận) [BÁO RIÊNG - LOẠI KHỎI WINRATE]`);
-  console.log(`- Tổng % Ván Hòa (Tất cả lý do):   ${((drawsCount / options.totalMatches) * 100).toFixed(1)}% (${drawsCount}/${options.totalMatches} trận)\n`);
+  console.log(`- Tổng % Ván Chưa Xong:             ${((reasonCounts.UNFINISHED / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.UNFINISHED}/${options.totalMatches} trận)\n`);
 
   console.log(`📍 SỐ ĐO TIỀN TUYẾN & TỶ LỆ TRỐNG SÂN (FRONTLINE METRICS):`);
   console.log(`- % Thời gian Phe Xanh (P1) có 0 quân sống: ${avgZeroUnitsLeft}%`);

@@ -43,18 +43,14 @@ export interface FloatingText {
   vy: number;
 }
 
-export type GameStatus = 'PAUSED' | 'PLAYING' | 'VICTORY' | 'DEFEAT' | 'DRAW';
-export type MatchEndReason = 'BASE_DESTROYED' | 'STALL_DRAIN' | 'TIMEOUT' | 'DRAW' | 'UNFINISHED';
+export type GameStatus = 'PAUSED' | 'PLAYING' | 'VICTORY' | 'DEFEAT';
+export type MatchEndReason = 'BASE_DESTROYED' | 'SURRENDER' | 'ADMIN_END' | 'UNFINISHED';
 
 export interface WorldSnapshot {
   status: GameStatus;
   endReason: MatchEndReason | null;
   gameMode: GameMode;
   matchTime: number;
-  matchDurationSec: number | null;
-  isSuddenDeath: boolean;
-  stallDrainActive: boolean;
-  stallDrainDps: number;
   autoRestartRemaining: number | null;
   playerBaseHp: number;
   botBaseHp: number;
@@ -91,26 +87,13 @@ export class World {
   public matchTime: number = 0;
   public cameraX: number = 0;
 
-  // Bế tắc (Stall detection & drain)
-  public stallTimer: number = 0;
-  public isStallDrainActive: boolean = false;
-  public stallDrainDuration: number = 0;
-  public currentStallDrainDps: number = 0;
-  public hasEverStalled: boolean = false;
-
-  // Đột tử (Sudden Death) khi hết giờ mà hòa máu căn cứ
-  public isSuddenDeath: boolean = false;
-
   // Tự chơi lại (Auto-restart)
   public autoRestartTimer: number | null = null;
   public autoRestartCancelled: boolean = false;
 
-  // Tổng sát thương gây ra bởi mỗi phe (để phân định hòa)
+  // Tổng sát thương gây ra bởi mỗi phe (để phân định nếu 2 base cùng vỡ trong 1 tick)
   public playerTotalDamageDealt: number = 0;
   public botTotalDamageDealt: number = 0;
-
-  // Cờ theo dõi sát thương trong tick hiện tại
-  public damageDealtInTick: boolean = false;
 
   // Hỗ trợ Seed determinism
   public random: () => number = Math.random;
@@ -197,18 +180,43 @@ export class World {
 
   public recordDamage(amount: number, sourceTeam: Team | null): void {
     if (amount <= 0) return;
-    this.damageDealtInTick = true;
-    this.stallTimer = 0;
-    if (this.isStallDrainActive) {
-      this.isStallDrainActive = false;
-      this.stallDrainDuration = 0;
-      this.currentStallDrainDps = 0;
-    }
     if (sourceTeam === 'LEFT') {
       this.playerTotalDamageDealt += amount;
     } else if (sourceTeam === 'RIGHT') {
       this.botTotalDamageDealt += amount;
     }
+  }
+
+  /**
+   * Đầu hàng (Surrender) - tính thua cho bên đầu hàng
+   */
+  public surrender(surrenderingTeam: Team = 'LEFT'): void {
+    if (this.status !== 'PLAYING') return;
+    this.endReason = 'SURRENDER';
+    if (surrenderingTeam === 'LEFT') {
+      this.status = 'DEFEAT';
+    } else {
+      this.status = 'VICTORY';
+    }
+    this.onMatchEnded();
+    this.notifySubscribers();
+  }
+
+  /**
+   * Lệnh quản trị kết thúc trận (ADMIN_END) - dùng cho chế độ LIVE hoặc debug
+   */
+  public adminEndMatch(winnerTeam?: Team | null): void {
+    if (this.status !== 'PLAYING') return;
+    this.endReason = 'ADMIN_END';
+    if (winnerTeam === 'LEFT') {
+      this.status = 'VICTORY';
+    } else if (winnerTeam === 'RIGHT') {
+      this.status = 'DEFEAT';
+    } else {
+      this.status = this.playerBaseHp >= this.botBaseHp ? 'VICTORY' : 'DEFEAT';
+    }
+    this.onMatchEnded();
+    this.notifySubscribers();
   }
 
   public isAnyUnitInCombat(): boolean {
@@ -239,17 +247,10 @@ export class World {
     this.status = 'PLAYING';
     this.endReason = null;
     this.matchTime = 0;
-    this.stallTimer = 0;
-    this.isStallDrainActive = false;
-    this.stallDrainDuration = 0;
-    this.currentStallDrainDps = 0;
-    this.hasEverStalled = false;
-    this.isSuddenDeath = false;
     this.autoRestartTimer = null;
     this.autoRestartCancelled = false;
     this.playerTotalDamageDealt = 0;
     this.botTotalDamageDealt = 0;
-    this.damageDealtInTick = false;
     this.playerBaseHp = BASE_MAX_HP;
     this.botBaseHp = BASE_MAX_HP;
 
@@ -281,7 +282,7 @@ export class World {
     if (!this.isHeadless) {
       if (this.status === 'VICTORY') {
         audioSynth.playVictory();
-      } else if (this.status === 'DEFEAT' || this.status === 'DRAW') {
+      } else if (this.status === 'DEFEAT') {
         audioSynth.playDefeat();
       }
     }
@@ -448,80 +449,28 @@ export class World {
       }
     }
 
-    // 10. Kiểm tra Bế Tắc (Stall Detection & Drain)
-    if (this.damageDealtInTick) {
-      this.stallTimer = 0;
-      if (this.isStallDrainActive) {
-        this.isStallDrainActive = false;
-        this.stallDrainDuration = 0;
-        this.currentStallDrainDps = 0;
-      }
-      this.damageDealtInTick = false;
-    } else if (this.isAnyUnitInCombat()) {
-      this.stallTimer = 0;
-    } else {
-      if (this.matchConfig.stallDetectSec !== null) {
-        this.stallTimer += dt;
-        if (this.stallTimer >= this.matchConfig.stallDetectSec) {
-          this.isStallDrainActive = true;
-          this.hasEverStalled = true;
-        }
-      }
-    }
-
-    if (this.isStallDrainActive) {
-      this.stallDrainDuration += dt;
-      const rampSteps = Math.floor(this.stallDrainDuration / this.matchConfig.stallDrainRampIntervalSec);
-      this.currentStallDrainDps = this.matchConfig.stallDrainInitialDps + rampSteps * this.matchConfig.stallDrainRampDps;
-
-      const drainAmount = this.currentStallDrainDps * dt;
-      this.playerBaseHp = Math.max(0, this.playerBaseHp - drainAmount);
-      this.botBaseHp = Math.max(0, this.botBaseHp - drainAmount);
-    }
-
-    // 11. Kiểm tra Hết Giờ (Timeout / Sudden Death)
-    if (this.matchConfig.matchDurationSec !== null && !this.isSuddenDeath) {
-      if (this.matchTime >= this.matchConfig.matchDurationSec) {
-        if (this.playerBaseHp > this.botBaseHp) {
-          this.status = 'VICTORY';
-          this.endReason = 'TIMEOUT';
-          this.onMatchEnded();
-        } else if (this.botBaseHp > this.playerBaseHp) {
-          this.status = 'DEFEAT';
-          this.endReason = 'TIMEOUT';
-          this.onMatchEnded();
-        } else {
-          // Bằng máu căn cứ: vào Sudden Death (tiếp tục đánh cho đến khi một căn cứ bị phá)
-          this.isSuddenDeath = true;
-        }
-      }
-    }
-
-    // 12. Kiểm tra Điều Kiện Thắng / Thua (Căn cứ bị phá hủy hoặc rút cạn máu)
+    // 10. Kiểm tra Điều Kiện Thắng / Thua (Căn cứ bị phá hủy)
     if (this.status === 'PLAYING') {
       if (this.playerBaseHp <= 0 && this.botBaseHp <= 0) {
         this.playerBaseHp = 0;
         this.botBaseHp = 0;
-        if (this.playerTotalDamageDealt > this.botTotalDamageDealt) {
+        // Nếu cả hai căn cứ cùng vỡ trong 1 tick, phân định theo tổng sát thương gây ra
+        if (this.playerTotalDamageDealt >= this.botTotalDamageDealt) {
           this.status = 'VICTORY';
-          this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
-        } else if (this.botTotalDamageDealt > this.playerTotalDamageDealt) {
-          this.status = 'DEFEAT';
-          this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
         } else {
-          this.status = 'DRAW';
-          this.endReason = 'DRAW';
+          this.status = 'DEFEAT';
         }
+        this.endReason = 'BASE_DESTROYED';
         this.onMatchEnded();
       } else if (this.playerBaseHp <= 0) {
         this.playerBaseHp = 0;
         this.status = 'DEFEAT';
-        this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
+        this.endReason = 'BASE_DESTROYED';
         this.onMatchEnded();
       } else if (this.botBaseHp <= 0) {
         this.botBaseHp = 0;
         this.status = 'VICTORY';
-        this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
+        this.endReason = 'BASE_DESTROYED';
         this.onMatchEnded();
       }
     }
@@ -1206,10 +1155,6 @@ export class World {
       endReason: this.endReason,
       gameMode: this.gameMode,
       matchTime: this.matchTime,
-      matchDurationSec: this.matchConfig.matchDurationSec,
-      isSuddenDeath: this.isSuddenDeath,
-      stallDrainActive: this.isStallDrainActive,
-      stallDrainDps: this.currentStallDrainDps,
       autoRestartRemaining: this.autoRestartTimer,
       playerBaseHp: this.playerBaseHp,
       botBaseHp: this.botBaseHp,

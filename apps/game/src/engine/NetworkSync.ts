@@ -26,6 +26,7 @@ export interface NetMessage {
     | 'BUILD_TURRET'
     | 'SELL_TURRET'
     | 'ULTIMATE'
+    | 'SURRENDER'
     | 'STATE_SYNC'
     | 'PING'
     | 'PONG';
@@ -284,7 +285,8 @@ export class NetworkSync {
       | 'ADD_SLOT'
       | 'BUILD_TURRET'
       | 'SELL_TURRET'
-      | 'ULTIMATE',
+      | 'ULTIMATE'
+      | 'SURRENDER',
     payload?: any
   ): void {
     if (this.connectionState !== 'CONNECTED' && this.connectionState !== 'HOSTING') {
@@ -492,6 +494,12 @@ export class NetworkSync {
       case 'ULTIMATE': {
         const targetTeam = msg.payload?.team as Team;
         this.world.triggerUltimate(targetTeam);
+        break;
+      }
+
+      case 'SURRENDER': {
+        const surrenderingTeam = msg.payload?.team as Team;
+        this.world.surrender(surrenderingTeam);
         break;
       }
 

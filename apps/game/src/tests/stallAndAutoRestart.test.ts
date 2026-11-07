@@ -1,93 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import { BASE_MAX_HP } from '../data/ages';
-import { DEFAULT_MODE_MATCH_CONFIGS, getModeMatchConfig } from '../data/modes';
+import { getModeMatchConfig } from '../data/modes';
 import { World } from '../engine/World';
 
-describe('Task T1: Chống bế tắc và tự chơi lại (Stall Detection, Drain & Auto-restart)', () => {
-  it('1. Cấu hình mặc định đúng theo chế độ: matchDurationSec null, stallDetectSec 60s (live: 30s), autoRestartDelaySec null (live: 10s)', () => {
+describe('Task T1c: Quy luật căn cứ, Đầu hàng, Admin End và Tự chơi lại', () => {
+  it('1. Cấu hình mặc định đúng theo chế độ: autoRestartDelaySec null (SOLO, LOCAL_2P, ONLINE_2P), 10s (LIVE)', () => {
     const soloCfg = getModeMatchConfig('SOLO');
-    expect(soloCfg.matchDurationSec).toBeNull();
-    expect(soloCfg.stallDetectSec).toBe(60);
     expect(soloCfg.autoRestartDelaySec).toBeNull();
-    expect(soloCfg.stallDrainInitialDps).toBe(2);
-    expect(soloCfg.stallDrainRampIntervalSec).toBe(10);
-    expect(soloCfg.stallDrainRampDps).toBe(1);
+
+    const localCfg = getModeMatchConfig('LOCAL_2P');
+    expect(localCfg.autoRestartDelaySec).toBeNull();
+
+    const onlineCfg = getModeMatchConfig('ONLINE_2P');
+    expect(onlineCfg.autoRestartDelaySec).toBeNull();
 
     const liveCfg = getModeMatchConfig('LIVE');
-    expect(liveCfg.matchDurationSec).toBeNull();
-    expect(liveCfg.stallDetectSec).toBe(30);
     expect(liveCfg.autoRestartDelaySec).toBe(10);
   });
 
-  it('2. Không ai gây sát thương trong N giây thì bật drain; căn cứ mất máu theo giây và tăng dần', () => {
+  it('2. Luật căn cứ bất di bất dịch: căn cứ KHÔNG BAO GIỜ bị rút máu tự động khi không bị tấn công', () => {
     const world = new World(true);
-    world.setMatchConfig({
-      stallDetectSec: 10,
-      stallDrainInitialDps: 2,
-      stallDrainRampIntervalSec: 10,
-      stallDrainRampDps: 1,
-    });
+    // Chế độ 2 người chơi (không có bot AI tự động spawn lính)
+    world.setGameMode('LOCAL_2P');
 
-    // Chạy 9 giây mô phỏng mà không có sát thương nào
+    // Chạy 300 giây mô phỏng (~5 phút) mà không có bất kỳ đòn đánh nào
     const dt = 1 / 60;
-    for (let i = 0; i < 9 * 60; i++) {
+    for (let i = 0; i < 300 * 60; i++) {
       world.update(dt);
     }
 
-    expect(world.isStallDrainActive).toBe(false);
+    // Máu căn cứ cả 2 phe phải giữ nguyên vẹn 100%
     expect(world.playerBaseHp).toBe(BASE_MAX_HP);
     expect(world.botBaseHp).toBe(BASE_MAX_HP);
-
-    // Chạy thêm 2 giây (tổng 11s > 10s) -> Kích hoạt chế độ bế tắc
-    for (let i = 0; i < 2 * 60; i++) {
-      world.update(dt);
-    }
-
-    expect(world.isStallDrainActive).toBe(true);
-    expect(world.hasEverStalled).toBe(true);
-    expect(world.currentStallDrainDps).toBe(2);
-    expect(world.playerBaseHp).toBeLessThan(BASE_MAX_HP);
-    expect(world.botBaseHp).toBeLessThan(BASE_MAX_HP);
-
-    const hpAfter1sDrain = world.playerBaseHp;
-
-    // Chạy thêm 10 giây trong chế độ bế tắc -> Tốc độ rút máu tăng lên 3 HP/s (2 + 1)
-    for (let i = 0; i < 10 * 60; i++) {
-      world.update(dt);
-    }
-
-    expect(world.currentStallDrainDps).toBe(3);
-    expect(world.playerBaseHp).toBeLessThan(hpAfter1sDrain);
-
-    // Snapshot phản ánh đúng trạng thái bế tắc cho HUD
-    const snap = world.getSnapshot();
-    expect(snap.stallDrainActive).toBe(true);
-    expect(snap.stallDrainDps).toBe(3);
+    expect(world.status).toBe('PLAYING');
+    expect(world.endReason).toBeNull();
   });
 
-  it('3. Có sát thương trở lại thì tắt chế độ bế tắc ngay lập tức', () => {
-    const world = new World(true);
-    world.setMatchConfig({ stallDetectSec: 5 });
-
-    // Đẩy thời gian qua 6 giây để kích hoạt drain
-    for (let i = 0; i < 6 * 60; i++) {
-      world.update(1 / 60);
-    }
-    expect(world.isStallDrainActive).toBe(true);
-
-    // Phát sinh sát thương
-    world.recordDamage(50, 'LEFT');
-    world.update(1 / 60);
-
-    expect(world.isStallDrainActive).toBe(false);
-    expect(world.stallTimer).toBe(0);
-    expect(world.currentStallDrainDps).toBe(0);
-
-    const snap = world.getSnapshot();
-    expect(snap.stallDrainActive).toBe(false);
-  });
-
-  it('4. Căn cứ bị phá vẫn kết thúc như cũ (BASE_DESTROYED)', () => {
+  it('3. Căn cứ bị phá kết thúc với BASE_DESTROYED', () => {
     const world = new World(true);
 
     // Bot đánh sập căn cứ Player
@@ -108,22 +57,8 @@ describe('Task T1: Chống bế tắc và tự chơi lại (Stall Detection, Dra
     expect(world.endReason).toBe('BASE_DESTROYED');
   });
 
-  it('5. Căn cứ bị rút cạn máu do bế tắc kết thúc với STALL_DRAIN', () => {
-    const world = new World(true);
-    world.setMatchConfig({ stallDetectSec: 1, stallDrainInitialDps: 500 });
-
-    // Cho bế tắc kích hoạt và rút sạch máu căn cứ
-    for (let i = 0; i < 4 * 60; i++) {
-      world.update(1 / 60);
-      if (world.status !== 'PLAYING') break;
-    }
-
-    expect(world.status).not.toBe('PLAYING');
-    expect(['STALL_DRAIN', 'DRAW']).toContain(world.endReason);
-  });
-
-  it('6. Hai căn cứ cùng về 0 trong một tick: phân định theo tổng sát thương gây ra hoặc DRAW', () => {
-    // Trường hợp 6a: Player gây nhiều sát thương hơn -> VICTORY
+  it('4. Hai căn cứ cùng về 0 trong một tick: phân định theo tổng sát thương gây ra', () => {
+    // Trường hợp 4a: Player gây nhiều sát thương hơn -> VICTORY
     const worldA = new World(true);
     worldA.recordDamage(800, 'LEFT');
     worldA.recordDamage(400, 'RIGHT');
@@ -134,7 +69,7 @@ describe('Task T1: Chống bế tắc và tự chơi lại (Stall Detection, Dra
     expect(worldA.status).toBe('VICTORY');
     expect(worldA.endReason).toBe('BASE_DESTROYED');
 
-    // Trường hợp 6b: Bot gây nhiều sát thương hơn -> DEFEAT
+    // Trường hợp 4b: Bot gây nhiều sát thương hơn -> DEFEAT
     const worldB = new World(true);
     worldB.recordDamage(300, 'LEFT');
     worldB.recordDamage(900, 'RIGHT');
@@ -144,44 +79,53 @@ describe('Task T1: Chống bế tắc và tự chơi lại (Stall Detection, Dra
 
     expect(worldB.status).toBe('DEFEAT');
     expect(worldB.endReason).toBe('BASE_DESTROYED');
-
-    // Trường hợp 6c: Tổng sát thương bằng nhau -> DRAW
-    const worldC = new World(true);
-    worldC.recordDamage(500, 'LEFT');
-    worldC.recordDamage(500, 'RIGHT');
-    worldC.playerBaseHp = 0;
-    worldC.botBaseHp = 0;
-    worldC.update(1 / 60);
-
-    expect(worldC.status).toBe('DRAW');
-    expect(worldC.endReason).toBe('DRAW');
   });
 
-  it('7. Tạm dừng (PAUSED) không làm chạy bộ đếm bế tắc', () => {
+  it('5. Tính năng Đầu hàng (surrender): tính thua cho bên đầu hàng với lý do SURRENDER', () => {
+    // Phe Trái đầu hàng -> DEFEAT cho phe Trái
+    const worldLeft = new World(true);
+    worldLeft.surrender('LEFT');
+
+    expect(worldLeft.status).toBe('DEFEAT');
+    expect(worldLeft.endReason).toBe('SURRENDER');
+
+    // Phe Phải đầu hàng -> VICTORY cho phe Trái
+    const worldRight = new World(true);
+    worldRight.surrender('RIGHT');
+
+    expect(worldRight.status).toBe('VICTORY');
+    expect(worldRight.endReason).toBe('SURRENDER');
+
+    // Khi trận đã kết thúc, gọi surrender không làm thay đổi trạng thái
+    worldRight.surrender('LEFT');
+    expect(worldRight.status).toBe('VICTORY');
+    expect(worldRight.endReason).toBe('SURRENDER');
+  });
+
+  it('6. Lệnh Quản trị (ADMIN_END): kết thúc trận ngay lập tức với lý do ADMIN_END', () => {
     const world = new World(true);
-    world.setMatchConfig({ stallDetectSec: 10 });
+    world.playerBaseHp = 800;
+    world.botBaseHp = 600;
 
-    // Chạy 4 giây bình thường
-    for (let i = 0; i < 4 * 60; i++) {
-      world.update(1 / 60);
-    }
-    expect(world.stallTimer).toBeCloseTo(4, 1);
+    // Admin cưỡng chế kết thúc mà không chỉ định bên thắng -> phân định theo máu
+    world.adminEndMatch();
+    expect(world.status).toBe('VICTORY');
+    expect(world.endReason).toBe('ADMIN_END');
 
-    // Tạm dừng game
-    world.status = 'PAUSED';
+    // Admin chỉ định phe Phải thắng
+    const worldAdminRight = new World(true);
+    worldAdminRight.adminEndMatch('RIGHT');
+    expect(worldAdminRight.status).toBe('DEFEAT');
+    expect(worldAdminRight.endReason).toBe('ADMIN_END');
 
-    // Update 5 giây nữa
-    for (let i = 0; i < 5 * 60; i++) {
-      world.update(1 / 60);
-    }
-
-    // Bộ đếm bế tắc và thời gian trận không đổi
-    expect(world.stallTimer).toBeCloseTo(4, 1);
-    expect(world.matchTime).toBeCloseTo(4, 1);
-    expect(world.isStallDrainActive).toBe(false);
+    // Admin chỉ định phe Trái thắng
+    const worldAdminLeft = new World(true);
+    worldAdminLeft.adminEndMatch('LEFT');
+    expect(worldAdminLeft.status).toBe('VICTORY');
+    expect(worldAdminLeft.endReason).toBe('ADMIN_END');
   });
 
-  it('8. autoRestart đếm ngược và tự động reset ván, có thể hủy thủ công', () => {
+  it('7. autoRestart đếm ngược và tự động reset ván, có thể hủy thủ công', () => {
     const world = new World(true);
     world.setMatchConfig({ autoRestartDelaySec: 3 });
 
@@ -220,7 +164,7 @@ describe('Task T1: Chống bế tắc và tự chơi lại (Stall Detection, Dra
     expect(world.status).toBe('DEFEAT');
   });
 
-  it('9. Kết quả mô phỏng giống nhau khi cùng seed (Deterministic)', () => {
+  it('8. Kết quả mô phỏng giống nhau khi cùng seed (Deterministic)', () => {
     const world1 = new World(true);
     world1.setSeed(12345);
     const r1 = [world1.random(), world1.random(), world1.random()];
@@ -230,39 +174,5 @@ describe('Task T1: Chống bế tắc và tự chơi lại (Stall Detection, Dra
     const r2 = [world2.random(), world2.random(), world2.random()];
 
     expect(r1).toEqual(r2);
-  });
-
-  it('10. Với cấu hình mặc định (matchDurationSec = null), hành vi trận đấu không đổi, không timeout ép buộc', () => {
-    const world = new World(true);
-    world.setGameMode('SOLO');
-    expect(world.matchConfig.matchDurationSec).toBeNull();
-
-    // Chạy qua 500 giây mô phỏng (quá thời lượng thông thường)
-    world.update(500);
-
-    // Nếu không ai đánh và có stall drain thì drain, nhưng không bị TIMEOUT ép buộc
-    expect(world.endReason).not.toBe('TIMEOUT');
-  });
-
-  it('11. Khi cấu hình matchDurationSec: hết giờ bên nhiều máu căn cứ hơn thắng, hòa thì vào sudden death', () => {
-    const world = new World(true);
-    world.setMatchConfig({ matchDurationSec: 100, stallDetectSec: null });
-
-    world.playerBaseHp = 800;
-    world.botBaseHp = 500;
-    world.update(101);
-
-    expect(world.status).toBe('VICTORY');
-    expect(world.endReason).toBe('TIMEOUT');
-
-    // Thử trường hợp hòa máu căn cứ -> Sudden Death
-    const worldSd = new World(true);
-    worldSd.setMatchConfig({ matchDurationSec: 100, stallDetectSec: null });
-    worldSd.playerBaseHp = 600;
-    worldSd.botBaseHp = 600;
-    worldSd.update(101);
-
-    expect(worldSd.isSuddenDeath).toBe(true);
-    expect(worldSd.status).toBe('PLAYING');
   });
 });

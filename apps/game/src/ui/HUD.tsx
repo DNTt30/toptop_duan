@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AGES_DATA, type TurretConfig } from '../data/ages';
+import { AGES_DATA, type Team, type TurretConfig } from '../data/ages';
 import { UPGRADE_CONFIG } from '../data/upgrades';
 import { type ConnectionState, type NetworkRole, type NetworkSync } from '../engine/NetworkSync';
 import { type World, type WorldSnapshot } from '../engine/World';
@@ -43,6 +43,12 @@ export const HUD: React.FC<HUDProps> = ({
   const [netPing, setNetPing] = useState<number>(networkSync?.pingMs || 0);
   const [showOnlineModal, setShowOnlineModal] = useState<boolean>(false);
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
+
+  // Xác nhận đầu hàng 2 bước ('LEFT' | 'RIGHT' | null)
+  const [surrenderConfirm, setSurrenderConfirm] = useState<Team | null>(null);
+  const [showLocalSurrenderSelect, setShowLocalSurrenderSelect] = useState<boolean>(false);
+  // Menu debug / quản trị cho chế độ LIVE
+  const [showAdminMenu, setShowAdminMenu] = useState<boolean>(false);
 
   // Tự động nhận diện màn hình Dọc (9:16 Portrait - TikTok LIVE 720x1280) vs Ngang (16:9 1280x720)
   const [isPortrait, setIsPortrait] = useState<boolean>(() => {
@@ -359,36 +365,6 @@ export const HUD: React.FC<HUDProps> = ({
         }
       `}</style>
 
-      {/* CẢNH BÁO BẾ TẮC: CĂN CỨ ĐANG MẤT MÁU */}
-      {snapshot.stallDrainActive && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '72px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.95), rgba(153, 27, 27, 0.95))',
-            border: '2px solid #f87171',
-            borderRadius: '16px',
-            padding: '8px 24px',
-            color: '#fff',
-            fontWeight: 900,
-            fontSize: '15px',
-            letterSpacing: '0.5px',
-            boxShadow: '0 0 24px rgba(239, 68, 68, 0.7), 0 4px 14px rgba(0,0,0,0.6)',
-            zIndex: 1100,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            animation: 'pulseRedAlert 1s infinite',
-            pointerEvents: 'none',
-          }}
-        >
-          <span>⚠️</span>
-          <span>BẾ TẮC! Căn cứ đang mất máu (-{snapshot.stallDrainDps} HP/s)</span>
-        </div>
-      )}
-
       {/* ==================================================== */}
       {/* 1. TOAST THÔNG BÁO SỰ KIỆN NÓNG GIỮA MÀN HÌNH */}
       {/* ==================================================== */}
@@ -574,32 +550,9 @@ export const HUD: React.FC<HUDProps> = ({
               backdropFilter: 'blur(6px)',
             }}
           >
-            {snapshot.matchDurationSec !== null ? (
-              <span
-                style={{
-                  fontWeight: 800,
-                  fontSize: '16px',
-                  color: snapshot.isSuddenDeath
-                    ? '#f59e0b'
-                    : Math.max(0, snapshot.matchDurationSec - snapshot.matchTime) <= 30
-                    ? '#ef4444'
-                    : '#f8fafc',
-                  textShadow: '0 1px 3px rgba(0,0,0,0.8)',
-                  animation:
-                    !snapshot.isSuddenDeath && Math.max(0, snapshot.matchDurationSec - snapshot.matchTime) <= 30
-                      ? 'blinkTimer 1s infinite'
-                      : 'none',
-                }}
-              >
-                {snapshot.isSuddenDeath
-                  ? '⚡ ĐỘT TỬ'
-                  : `⏱️ ${formatTime(Math.max(0, snapshot.matchDurationSec - snapshot.matchTime))}`}
-              </span>
-            ) : (
-              <span style={{ fontWeight: 800, fontSize: '16px', color: '#f8fafc', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
-                ⏱️ {formatTime(snapshot.matchTime)}
-              </span>
-            )}
+            <span style={{ fontWeight: 800, fontSize: '16px', color: '#f8fafc', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+              ⏱️ {formatTime(snapshot.matchTime)}
+            </span>
 
             {snapshot.gameMode === 'ONLINE_2P' && netState === 'CONNECTED' && (
               <span
@@ -661,6 +614,65 @@ export const HUD: React.FC<HUDProps> = ({
                 }}
               >
                 ⚙️ Cài Đặt
+              </button>
+            )}
+
+            {/* Nút Đầu Hàng (Solo, 2 Người, Online) */}
+            {snapshot.status === 'PLAYING' && snapshot.gameMode !== 'LIVE' && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (snapshot.gameMode === 'LOCAL_2P') {
+                    setShowLocalSurrenderSelect(true);
+                  } else if (snapshot.gameMode === 'ONLINE_2P') {
+                    const myTeam: Team = netRole === 'GUEST' ? 'RIGHT' : 'LEFT';
+                    setSurrenderConfirm(myTeam);
+                  } else {
+                    setSurrenderConfirm('LEFT');
+                  }
+                }}
+                title="Đầu hàng trận đấu (Tính thua)"
+                style={{
+                  background: 'rgba(239, 68, 68, 0.2)',
+                  color: '#fca5a5',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  borderRadius: '10px',
+                  padding: '4px 10px',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                🏳️ Đầu Hàng
+              </button>
+            )}
+
+            {/* Nút Lệnh Admin End (Chế độ Live hoặc Dev) */}
+            {(snapshot.gameMode === 'LIVE' || (import.meta as any).env?.DEV) && (
+              <button
+                type="button"
+                onClick={() => setShowAdminMenu(true)}
+                title="Quản trị / Debug kết thúc trận đấu"
+                style={{
+                  background: 'rgba(234, 179, 8, 0.2)',
+                  color: '#fde047',
+                  border: '1px solid rgba(234, 179, 8, 0.4)',
+                  borderRadius: '10px',
+                  padding: '4px 10px',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                🛑 Admin
               </button>
             )}
           </div>
@@ -2121,9 +2133,9 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
       {/* ==================================================== */}
-      {/* 6. MÀN HÌNH KẾT THÚC TRẬN ĐẤU (CHIẾN THẮNG / THẤT BẠI / HÒA) */}
+      {/* 6. MÀN HÌNH KẾT THÚC TRẬN ĐẤU (CHIẾN THẮNG / THẤT BẠI) */}
       {/* ==================================================== */}
-      {(snapshot.status === 'VICTORY' || snapshot.status === 'DEFEAT' || snapshot.status === 'DRAW') && (
+      {(snapshot.status === 'VICTORY' || snapshot.status === 'DEFEAT') && (
         <div
           style={{
             position: 'fixed',
@@ -2146,8 +2158,6 @@ export const HUD: React.FC<HUDProps> = ({
               border:
                 snapshot.status === 'VICTORY'
                   ? '2px solid #facc15'
-                  : snapshot.status === 'DRAW'
-                  ? '2px solid #38bdf8'
                   : '2px solid #ef4444',
               borderRadius: '24px',
               padding: '28px 36px',
@@ -2158,7 +2168,7 @@ export const HUD: React.FC<HUDProps> = ({
             }}
           >
             <div style={{ fontSize: '48px', marginBottom: '8px' }}>
-              {snapshot.status === 'VICTORY' ? '🏆' : snapshot.status === 'DRAW' ? '🤝' : '💥'}
+              {snapshot.status === 'VICTORY' ? '🏆' : '💥'}
             </div>
             <h2
               style={{
@@ -2168,16 +2178,12 @@ export const HUD: React.FC<HUDProps> = ({
                 color:
                   snapshot.status === 'VICTORY'
                     ? '#facc15'
-                    : snapshot.status === 'DRAW'
-                    ? '#38bdf8'
                     : '#f87171',
                 letterSpacing: '1px',
               }}
             >
               {snapshot.status === 'VICTORY'
                 ? 'CHIẾN THẮNG!'
-                : snapshot.status === 'DRAW'
-                ? 'HÒA TRẬN!'
                 : 'THẤT BẠI!'}
             </h2>
 
@@ -2196,9 +2202,8 @@ export const HUD: React.FC<HUDProps> = ({
               }}
             >
               {snapshot.endReason === 'BASE_DESTROYED' && '💥 Căn cứ bị phá hủy'}
-              {snapshot.endReason === 'STALL_DRAIN' && '⚠️ Bế tắc: Căn cứ bị rút cạn máu'}
-              {snapshot.endReason === 'TIMEOUT' && '⏱️ Hết thời gian: Phân định theo máu căn cứ'}
-              {snapshot.endReason === 'DRAW' && '🤝 Bất phân thắng bại (Hòa điểm)'}
+              {snapshot.endReason === 'SURRENDER' && '🏳️ Đầu hàng'}
+              {snapshot.endReason === 'ADMIN_END' && '🛑 Quản trị viên kết thúc trận'}
               {!snapshot.endReason && 'Trận đấu kết thúc'}
             </div>
 
@@ -2283,6 +2288,305 @@ export const HUD: React.FC<HUDProps> = ({
                   🏠 Về Màn Hình Chính
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* MODAL CHỌN PHE ĐẦU HÀNG (LOCAL 2P) */}
+      {/* ==================================================== */}
+      {showLocalSurrenderSelect && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200,
+            pointerEvents: 'auto',
+          }}
+        >
+          <div
+            style={{
+              background: '#0f172a',
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+              borderRadius: '16px',
+              padding: '24px',
+              maxWidth: '380px',
+              width: '90%',
+              textAlign: 'center',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.8)',
+            }}
+          >
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', color: '#f87171', fontWeight: 900 }}>
+              🏳️ CHỌN PHE ĐẦU HÀNG
+            </h3>
+            <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#cbd5e1' }}>
+              Phe nào xin đầu hàng? Phe đối diện sẽ giành chiến thắng ngay lập tức.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLocalSurrenderSelect(false);
+                  setSurrenderConfirm('LEFT');
+                }}
+                style={{
+                  background: 'rgba(59, 130, 246, 0.25)',
+                  border: '1px solid #60a5fa',
+                  color: '#93c5fd',
+                  borderRadius: '10px',
+                  padding: '10px',
+                  fontWeight: 800,
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                🔵 Người Chơi 1 (Phe Trái) Xin Đầu Hàng
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLocalSurrenderSelect(false);
+                  setSurrenderConfirm('RIGHT');
+                }}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.25)',
+                  border: '1px solid #f87171',
+                  color: '#fca5a5',
+                  borderRadius: '10px',
+                  padding: '10px',
+                  fontWeight: 800,
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                🔴 Người Chơi 2 (Phe Phải) Xin Đầu Hàng
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLocalSurrenderSelect(false)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  color: '#cbd5e1',
+                  borderRadius: '10px',
+                  padding: '8px',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  marginTop: '4px',
+                }}
+              >
+                Hủy Bỏ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* MODAL XÁC NHẬN ĐẦU HÀNG (2 BƯỚC) */}
+      {/* ==================================================== */}
+      {surrenderConfirm !== null && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200,
+            pointerEvents: 'auto',
+          }}
+        >
+          <div
+            style={{
+              background: '#0f172a',
+              border: '2px solid #ef4444',
+              borderRadius: '16px',
+              padding: '24px',
+              maxWidth: '380px',
+              width: '90%',
+              textAlign: 'center',
+              boxShadow: '0 8px 32px rgba(239, 68, 68, 0.4)',
+            }}
+          >
+            <div style={{ fontSize: '36px', marginBottom: '8px' }}>🏳️</div>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '18px', color: '#f87171', fontWeight: 900 }}>
+              XÁC NHẬN ĐẦU HÀNG?
+            </h3>
+            <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#cbd5e1', lineHeight: '1.5' }}>
+              Bạn có chắc chắn muốn bỏ cuộc? Trận đấu sẽ kết thúc ngay và tính <b>THẤT BẠI</b> cho phe{' '}
+              <b style={{ color: surrenderConfirm === 'LEFT' ? '#60a5fa' : '#f87171' }}>
+                {surrenderConfirm === 'LEFT' ? 'Bên Trái' : 'Bên Phải'}
+              </b>.
+            </p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setSurrenderConfirm(null)}
+                style={{
+                  flex: 1,
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  color: '#cbd5e1',
+                  borderRadius: '10px',
+                  padding: '10px',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                Tiếp Tục Đấu
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const teamToSurrender = surrenderConfirm;
+                  setSurrenderConfirm(null);
+                  world.surrender(teamToSurrender);
+                  if (snapshot.gameMode === 'ONLINE_2P') {
+                    networkSync?.sendAction('SURRENDER', { team: teamToSurrender });
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                  border: 'none',
+                  color: '#fff',
+                  borderRadius: '10px',
+                  padding: '10px',
+                  fontWeight: 900,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 10px rgba(239, 68, 68, 0.4)',
+                }}
+              >
+                Chấp Nhận Đầu Hàng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* MODAL QUẢN TRỊ ADMIN END (CHẾ ĐỘ LIVE / DEBUG) */}
+      {/* ==================================================== */}
+      {showAdminMenu && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200,
+            pointerEvents: 'auto',
+          }}
+        >
+          <div
+            style={{
+              background: '#0f172a',
+              border: '2px solid #eab308',
+              borderRadius: '16px',
+              padding: '24px',
+              maxWidth: '400px',
+              width: '90%',
+              textAlign: 'center',
+              boxShadow: '0 8px 32px rgba(234, 179, 8, 0.4)',
+            }}
+          >
+            <div style={{ fontSize: '36px', marginBottom: '8px' }}>🛑</div>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '18px', color: '#facc15', fontWeight: 900 }}>
+              QUẢN TRỊ TRẬN ĐẤU (ADMIN_END)
+            </h3>
+            <p style={{ margin: '0 0 18px 0', fontSize: '13px', color: '#cbd5e1', lineHeight: '1.5' }}>
+              Kích hoạt quyền quản trị viên để cưỡng chế kết thúc ván đấu (Chế độ LIVE / Debug).
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdminMenu(false);
+                  world.adminEndMatch();
+                }}
+                style={{
+                  background: 'rgba(234, 179, 8, 0.2)',
+                  border: '1px solid #eab308',
+                  color: '#fde047',
+                  borderRadius: '10px',
+                  padding: '10px',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                🛑 Kết Thúc Ngay (Tự Phân Thắng Thua Theo Máu)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdminMenu(false);
+                  world.adminEndMatch('LEFT');
+                }}
+                style={{
+                  background: 'rgba(59, 130, 246, 0.2)',
+                  border: '1px solid #60a5fa',
+                  color: '#93c5fd',
+                  borderRadius: '10px',
+                  padding: '10px',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                👑 Quyết Định Phe Trái Thắng
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdminMenu(false);
+                  world.adminEndMatch('RIGHT');
+                }}
+                style={{
+                  background: 'rgba(239, 68, 68, 0.2)',
+                  border: '1px solid #f87171',
+                  color: '#fca5a5',
+                  borderRadius: '10px',
+                  padding: '10px',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                👑 Quyết Định Phe Phải Thắng
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAdminMenu(false)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  color: '#cbd5e1',
+                  borderRadius: '10px',
+                  padding: '8px',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  marginTop: '4px',
+                }}
+              >
+                Đóng
+              </button>
             </div>
           </div>
         </div>
