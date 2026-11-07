@@ -379,14 +379,47 @@ export class World {
     if (this.status !== 'PLAYING') return;
 
     if (this.playerBaseHp <= 0 && this.botBaseHp <= 0) {
+      const pOverkillHp = this.playerBaseHp;
+      const bOverkillHp = this.botBaseHp;
       this.playerBaseHp = 0;
       this.botBaseHp = 0;
-      // Nếu cả hai căn cứ cùng vỡ trong 1 tick, phân định theo tổng sát thương gây ra
-      if (this.playerTotalDamageDealt >= this.botTotalDamageDealt) {
+
+      // Nấc 1: Bên có máu âm ít hơn thắng (ví dụ -5 HP thắng -50 HP)
+      if (pOverkillHp > bOverkillHp) {
         this.status = 'VICTORY';
-      } else {
+      } else if (bOverkillHp > pOverkillHp) {
         this.status = 'DEFEAT';
       }
+      // Nấc 2: Nếu máu âm bằng nhau, bên gây tổng sát thương lớn hơn thắng
+      else if (this.playerTotalDamageDealt > this.botTotalDamageDealt) {
+        this.status = 'VICTORY';
+      } else if (this.botTotalDamageDealt > this.playerTotalDamageDealt) {
+        this.status = 'DEFEAT';
+      }
+      // Nấc 3: Tổng máu quân còn sống trên sân, sau đó là tổng vàng kiếm được
+      else {
+        const playerUnitsAliveHp = this.playerUnits
+          .filter((u) => u.isAlive)
+          .reduce((sum, u) => sum + u.hp, 0);
+        const botUnitsAliveHp = this.botUnits
+          .filter((u) => u.isAlive)
+          .reduce((sum, u) => sum + u.hp, 0);
+
+        if (playerUnitsAliveHp > botUnitsAliveHp) {
+          this.status = 'VICTORY';
+        } else if (botUnitsAliveHp > playerUnitsAliveHp) {
+          this.status = 'DEFEAT';
+        } else if (this.playerEconomy.totalGoldEarned > this.botEconomy.totalGoldEarned) {
+          this.status = 'VICTORY';
+        } else if (this.botEconomy.totalGoldEarned > this.playerEconomy.totalGoldEarned) {
+          this.status = 'DEFEAT';
+        }
+        // Nấc 4: Quyết định ngẫu nhiên dựa trên RNG seed (không dùng >= để không thiên vị)
+        else {
+          this.status = this.random() < 0.5 ? 'VICTORY' : 'DEFEAT';
+        }
+      }
+
       this.endReason = 'BASE_DESTROYED';
       this.onMatchEnded();
     } else if (this.playerBaseHp <= 0) {
