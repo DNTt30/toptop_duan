@@ -9,11 +9,13 @@
  */
 
 import { BotAI, type BotDifficulty, type BotStrategy } from './engine/BotAI';
-import { World } from './engine/World';
+import { World, type MatchEndReason } from './engine/World';
 
 interface MatchMetrics {
   winner: 'LEFT' | 'RIGHT' | 'DRAW';
   durationSeconds: number;
+  endReason: MatchEndReason;
+  wasStalled: boolean;
   leftAge: number;
   rightAge: number;
   leftGoldEarned: number;
@@ -31,9 +33,10 @@ function runSingleMatch(
   rightDifficulty: BotDifficulty,
   leftStrategy: BotStrategy,
   rightStrategy: BotStrategy,
-  maxMatchSeconds: number = 360
+  maxMatchSeconds: number = 600
 ): MatchMetrics {
   const world = new World(true); // Headless mode (zero audio, zero DOM)
+  world.setGameMode('SOLO'); // Chế độ SOLO (stallDetectSec: 60s, matchDurationSec: null)
 
   const leftAI = new BotAI(leftDifficulty, 'LEFT', leftStrategy);
   world.botAI.team = 'RIGHT';
@@ -60,9 +63,13 @@ function runSingleMatch(
     world.update(dt);
 
     if (world.status !== 'PLAYING') {
+      const winner: 'LEFT' | 'RIGHT' | 'DRAW' =
+        world.status === 'VICTORY' ? 'LEFT' : world.status === 'DEFEAT' ? 'RIGHT' : 'DRAW';
       return {
-        winner: world.status === 'VICTORY' ? 'LEFT' : 'RIGHT',
+        winner,
         durationSeconds: world.matchTime,
+        endReason: world.endReason || 'BASE_DESTROYED',
+        wasStalled: world.hasEverStalled,
         leftAge: world.playerAge.currentAge,
         rightAge: world.botAge.currentAge,
         leftGoldEarned: world.playerEconomy.totalGoldEarned,
@@ -77,25 +84,19 @@ function runSingleMatch(
     }
   }
 
-  // Phân định thắng thua khi hết giờ dựa trên HP căn cứ và XP
+  // Safety fallback nếu vượt quá maxTicks (600s)
   let winner: 'LEFT' | 'RIGHT' | 'DRAW' = 'DRAW';
   if (world.playerBaseHp > world.botBaseHp) {
     winner = 'LEFT';
   } else if (world.botBaseHp > world.playerBaseHp) {
-    winner = 'RIGHT';
-  } else if (world.playerAge.currentAge > world.botAge.currentAge) {
-    winner = 'LEFT';
-  } else if (world.botAge.currentAge > world.playerAge.currentAge) {
-    winner = 'RIGHT';
-  } else if (world.playerEconomy.xp > world.botEconomy.xp) {
-    winner = 'LEFT';
-  } else if (world.botEconomy.xp > world.playerEconomy.xp) {
     winner = 'RIGHT';
   }
 
   return {
     winner,
     durationSeconds: world.matchTime,
+    endReason: world.endReason || 'TIMEOUT',
+    wasStalled: world.hasEverStalled,
     leftAge: world.playerAge.currentAge,
     rightAge: world.botAge.currentAge,
     leftGoldEarned: world.playerEconomy.totalGoldEarned,
@@ -233,12 +234,36 @@ export function runSimulationSuite(totalMatches: number = 1000): void {
     else if (m.winner !== 'DRAW') upgradeWinsVsSpam++;
   }
 
+  // 4. Thống kê theo lý do kết thúc trận & bế tắc
+  const reasonStats: Record<MatchEndReason, number> = {
+    BASE_DESTROYED: 0,
+    STALL_DRAIN: 0,
+    TIMEOUT: 0,
+    DRAW: 0,
+  };
+  let stalledMatchesCount = 0;
+
+  for (const m of allMatches) {
+    reasonStats[m.endReason] = (reasonStats[m.endReason] || 0) + 1;
+    if (m.wasStalled) stalledMatchesCount++;
+  }
+
   console.log(`\n======================================================================`);
   console.log(`📊 KẾT QUẢ ĐO ĐẠC HỆ THỐNG SAU ${totalMatches} TRẬN ĐẤU`);
   console.log(`======================================================================`);
   console.log(`⏱️ Thời gian mô phỏng: ${elapsedSeconds}s (~${(totalMatches / Number(elapsedSeconds)).toFixed(0)} trận/s)`);
   console.log(`⏳ Thời gian trận trung bình: ${avgDuration}s (Chuẩn thiết kế: 90 - 240s)`);
   console.log(`💰 Vàng thu / chi trung bình: Left (${avgLeftGoldEarned}G / ${avgLeftGoldSpent}G) vs Right (${avgRightGoldEarned}G / ${avgRightGoldSpent}G)\n`);
+
+  console.log(`🏁 PHÂN TÍCH LÝ DO KẾT THÚC TRẬN:`);
+  console.log(`- BASE_DESTROYED (Căn cứ bị phá hủy): ${((reasonStats.BASE_DESTROYED / totalMatches) * 100).toFixed(1)}% (${reasonStats.BASE_DESTROYED}/${totalMatches} trận)`);
+  console.log(`- STALL_DRAIN (Rút cạn máu bế tắc): ${((reasonStats.STALL_DRAIN / totalMatches) * 100).toFixed(1)}% (${reasonStats.STALL_DRAIN}/${totalMatches} trận)`);
+  console.log(`- TIMEOUT (Hết giờ thi đấu): ${((reasonStats.TIMEOUT / totalMatches) * 100).toFixed(1)}% (${reasonStats.TIMEOUT}/${totalMatches} trận)`);
+  console.log(`- DRAW (Hòa trận): ${((reasonStats.DRAW / totalMatches) * 100).toFixed(1)}% (${reasonStats.DRAW}/${totalMatches} trận)`);
+
+  console.log(`\n⚠️ CHỈ SỐ BẾ TẮC (STALL METRICS):`);
+  console.log(`- Tỷ lệ ván từng rơi vào bế tắc: ${((stalledMatchesCount / totalMatches) * 100).toFixed(1)}% (${stalledMatchesCount}/${totalMatches} trận)`);
+  console.log(`- Tỷ lệ ván kết thúc do rút cạn máu (STALL_DRAIN): ${((reasonStats.STALL_DRAIN / totalMatches) * 100).toFixed(1)}% (${reasonStats.STALL_DRAIN}/${totalMatches} trận)\n`);
 
   console.log(`📈 HIỆU QUẢ THEO TỪNG CHIẾN THUẬT:`);
   for (const [strat, stat] of Object.entries(stratStats) as [BotStrategy, StratStats][]) {

@@ -348,7 +348,46 @@ export const HUD: React.FC<HUDProps> = ({
           from { opacity: 0; transform: translateY(-10px); }
           to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes pulseRedAlert {
+          0% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.6); transform: translateX(-50%) scale(1); }
+          50% { box-shadow: 0 0 24px rgba(239, 68, 68, 1); transform: translateX(-50%) scale(1.03); }
+          100% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.6); transform: translateX(-50%) scale(1); }
+        }
+        @keyframes blinkTimer {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.35; transform: scale(1.08); }
+        }
       `}</style>
+
+      {/* CẢNH BÁO BẾ TẮC: CĂN CỨ ĐANG MẤT MÁU */}
+      {snapshot.stallDrainActive && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '72px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.95), rgba(153, 27, 27, 0.95))',
+            border: '2px solid #f87171',
+            borderRadius: '16px',
+            padding: '8px 24px',
+            color: '#fff',
+            fontWeight: 900,
+            fontSize: '15px',
+            letterSpacing: '0.5px',
+            boxShadow: '0 0 24px rgba(239, 68, 68, 0.7), 0 4px 14px rgba(0,0,0,0.6)',
+            zIndex: 1100,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            animation: 'pulseRedAlert 1s infinite',
+            pointerEvents: 'none',
+          }}
+        >
+          <span>⚠️</span>
+          <span>BẾ TẮC! Căn cứ đang mất máu (-{snapshot.stallDrainDps} HP/s)</span>
+        </div>
+      )}
 
       {/* ==================================================== */}
       {/* 1. TOAST THÔNG BÁO SỰ KIỆN NÓNG GIỮA MÀN HÌNH */}
@@ -535,9 +574,32 @@ export const HUD: React.FC<HUDProps> = ({
               backdropFilter: 'blur(6px)',
             }}
           >
-            <span style={{ fontWeight: 800, fontSize: '16px', color: '#f8fafc', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
-              ⏱️ {formatTime(snapshot.matchTime)}
-            </span>
+            {snapshot.matchDurationSec !== null ? (
+              <span
+                style={{
+                  fontWeight: 800,
+                  fontSize: '16px',
+                  color: snapshot.isSuddenDeath
+                    ? '#f59e0b'
+                    : Math.max(0, snapshot.matchDurationSec - snapshot.matchTime) <= 30
+                    ? '#ef4444'
+                    : '#f8fafc',
+                  textShadow: '0 1px 3px rgba(0,0,0,0.8)',
+                  animation:
+                    !snapshot.isSuddenDeath && Math.max(0, snapshot.matchDurationSec - snapshot.matchTime) <= 30
+                      ? 'blinkTimer 1s infinite'
+                      : 'none',
+                }}
+              >
+                {snapshot.isSuddenDeath
+                  ? '⚡ ĐỘT TỬ'
+                  : `⏱️ ${formatTime(Math.max(0, snapshot.matchDurationSec - snapshot.matchTime))}`}
+              </span>
+            ) : (
+              <span style={{ fontWeight: 800, fontSize: '16px', color: '#f8fafc', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+                ⏱️ {formatTime(snapshot.matchTime)}
+              </span>
+            )}
 
             {snapshot.gameMode === 'ONLINE_2P' && netState === 'CONNECTED' && (
               <span
@@ -2059,9 +2121,9 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
       {/* ==================================================== */}
-      {/* 6. MÀN HÌNH KẾT THÚC TRẬN ĐẤU (CHIẾN THẮNG / THẤT BẠI) */}
+      {/* 6. MÀN HÌNH KẾT THÚC TRẬN ĐẤU (CHIẾN THẮNG / THẤT BẠI / HÒA) */}
       {/* ==================================================== */}
-      {(snapshot.status === 'VICTORY' || snapshot.status === 'DEFEAT') && (
+      {(snapshot.status === 'VICTORY' || snapshot.status === 'DEFEAT' || snapshot.status === 'DRAW') && (
         <div
           style={{
             position: 'fixed',
@@ -2081,7 +2143,12 @@ export const HUD: React.FC<HUDProps> = ({
           <div
             style={{
               background: 'rgba(15, 23, 42, 0.96)',
-              border: snapshot.status === 'VICTORY' ? '2px solid #facc15' : '2px solid #ef4444',
+              border:
+                snapshot.status === 'VICTORY'
+                  ? '2px solid #facc15'
+                  : snapshot.status === 'DRAW'
+                  ? '2px solid #38bdf8'
+                  : '2px solid #ef4444',
               borderRadius: '24px',
               padding: '28px 36px',
               maxWidth: '420px',
@@ -2091,22 +2158,90 @@ export const HUD: React.FC<HUDProps> = ({
             }}
           >
             <div style={{ fontSize: '48px', marginBottom: '8px' }}>
-              {snapshot.status === 'VICTORY' ? '🏆' : '💥'}
+              {snapshot.status === 'VICTORY' ? '🏆' : snapshot.status === 'DRAW' ? '🤝' : '💥'}
             </div>
             <h2
               style={{
                 margin: '0 0 8px 0',
                 fontSize: '30px',
                 fontWeight: 900,
-                color: snapshot.status === 'VICTORY' ? '#facc15' : '#f87171',
+                color:
+                  snapshot.status === 'VICTORY'
+                    ? '#facc15'
+                    : snapshot.status === 'DRAW'
+                    ? '#38bdf8'
+                    : '#f87171',
                 letterSpacing: '1px',
               }}
             >
-              {snapshot.status === 'VICTORY' ? 'CHIẾN THẮNG!' : 'THẤT BẠI!'}
+              {snapshot.status === 'VICTORY'
+                ? 'CHIẾN THẮNG!'
+                : snapshot.status === 'DRAW'
+                ? 'HÒA TRẬN!'
+                : 'THẤT BẠI!'}
             </h2>
-            <p style={{ margin: '0 0 20px 0', fontSize: '14px', color: '#cbd5e1' }}>
+
+            {/* HIỂN THỊ LÝ DO KẾT THÚC TRẬN */}
+            <div
+              style={{
+                display: 'inline-block',
+                margin: '0 auto 12px auto',
+                padding: '6px 14px',
+                borderRadius: '8px',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.16)',
+                fontSize: '13px',
+                fontWeight: 700,
+                color: '#e2e8f0',
+              }}
+            >
+              {snapshot.endReason === 'BASE_DESTROYED' && '💥 Căn cứ bị phá hủy'}
+              {snapshot.endReason === 'STALL_DRAIN' && '⚠️ Bế tắc: Căn cứ bị rút cạn máu'}
+              {snapshot.endReason === 'TIMEOUT' && '⏱️ Hết thời gian: Phân định theo máu căn cứ'}
+              {snapshot.endReason === 'DRAW' && '🤝 Bất phân thắng bại (Hòa điểm)'}
+              {!snapshot.endReason && 'Trận đấu kết thúc'}
+            </div>
+
+            <p style={{ margin: '0 0 16px 0', fontSize: '14px', color: '#cbd5e1' }}>
               Thời gian trận đấu: <b>{formatTime(snapshot.matchTime)}</b> • Kỷ nguyên đạt được: <b>{playerAgeConfig.name}</b>
             </p>
+
+            {/* ĐẾM NGƯỢC TỰ ĐỘNG CHƠI LẠI (AUTO-RESTART) */}
+            {snapshot.autoRestartRemaining !== null && (
+              <div
+                style={{
+                  marginBottom: '16px',
+                  padding: '10px 14px',
+                  borderRadius: '12px',
+                  background: 'rgba(59, 130, 246, 0.16)',
+                  border: '1px solid rgba(59, 130, 246, 0.45)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span style={{ fontSize: '13px', color: '#93c5fd', fontWeight: 800 }}>
+                  ⏱️ Ván mới sau {Math.ceil(snapshot.autoRestartRemaining)}s
+                </span>
+                <button
+                  type="button"
+                  onClick={() => world.cancelAutoRestart()}
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.25)',
+                    border: '1px solid #ef4444',
+                    color: '#fca5a5',
+                    borderRadius: '6px',
+                    padding: '4px 10px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Hủy
+                </button>
+              </div>
+            )}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <button
                 type="button"

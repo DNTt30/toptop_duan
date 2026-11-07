@@ -28,6 +28,9 @@ import { Turret, TurretManager } from './Turret';
 import { type BarrageShellSpec, UltimateManager } from './Ultimate';
 import { Unit } from './Unit';
 import { UpgradeManager, type UpgradeLevels } from './Upgrades';
+import { getModeMatchConfig, type GameMode, type ModeMatchConfig } from '../data/modes';
+
+export type { GameMode, ModeMatchConfig };
 
 export interface FloatingText {
   id: string;
@@ -40,13 +43,19 @@ export interface FloatingText {
   vy: number;
 }
 
-export type GameStatus = 'PAUSED' | 'PLAYING' | 'VICTORY' | 'DEFEAT';
-export type GameMode = 'SOLO' | 'LOCAL_2P' | 'ONLINE_2P';
+export type GameStatus = 'PAUSED' | 'PLAYING' | 'VICTORY' | 'DEFEAT' | 'DRAW';
+export type MatchEndReason = 'BASE_DESTROYED' | 'STALL_DRAIN' | 'TIMEOUT' | 'DRAW';
 
 export interface WorldSnapshot {
   status: GameStatus;
+  endReason: MatchEndReason | null;
   gameMode: GameMode;
   matchTime: number;
+  matchDurationSec: number | null;
+  isSuddenDeath: boolean;
+  stallDrainActive: boolean;
+  stallDrainDps: number;
+  autoRestartRemaining: number | null;
   playerBaseHp: number;
   botBaseHp: number;
   playerAge: number;
@@ -76,9 +85,35 @@ export interface WorldSnapshot {
 
 export class World {
   public status: GameStatus = 'PLAYING';
+  public endReason: MatchEndReason | null = null;
   public gameMode: GameMode = 'SOLO';
+  public matchConfig: ModeMatchConfig = getModeMatchConfig('SOLO');
   public matchTime: number = 0;
   public cameraX: number = 0;
+
+  // Bế tắc (Stall detection & drain)
+  public stallTimer: number = 0;
+  public isStallDrainActive: boolean = false;
+  public stallDrainDuration: number = 0;
+  public currentStallDrainDps: number = 0;
+  public hasEverStalled: boolean = false;
+
+  // Đột tử (Sudden Death) khi hết giờ mà hòa máu căn cứ
+  public isSuddenDeath: boolean = false;
+
+  // Tự chơi lại (Auto-restart)
+  public autoRestartTimer: number | null = null;
+  public autoRestartCancelled: boolean = false;
+
+  // Tổng sát thương gây ra bởi mỗi phe (để phân định hòa)
+  public playerTotalDamageDealt: number = 0;
+  public botTotalDamageDealt: number = 0;
+
+  // Cờ theo dõi sát thương trong tick hiện tại
+  public damageDealtInTick: boolean = false;
+
+  // Hỗ trợ Seed determinism
+  public random: () => number = Math.random;
 
   // Căn cứ
   public readonly baseLeftX = BASE_WIDTH;
@@ -135,7 +170,57 @@ export class World {
 
   public setGameMode(mode: GameMode): void {
     this.gameMode = mode;
+    this.matchConfig = getModeMatchConfig(mode);
     this.notifySubscribers();
+  }
+
+  public setMatchConfig(customConfig: Partial<ModeMatchConfig>): void {
+    this.matchConfig = { ...this.matchConfig, ...customConfig };
+    this.notifySubscribers();
+  }
+
+  public cancelAutoRestart(): void {
+    this.autoRestartCancelled = true;
+    this.autoRestartTimer = null;
+    this.notifySubscribers();
+  }
+
+  public setSeed(seed: number): void {
+    let s = seed >>> 0;
+    this.random = () => {
+      s = (s + 0x6D2B79F5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  public recordDamage(amount: number, sourceTeam: Team | null): void {
+    if (amount <= 0) return;
+    this.damageDealtInTick = true;
+    this.stallTimer = 0;
+    if (this.isStallDrainActive) {
+      this.isStallDrainActive = false;
+      this.stallDrainDuration = 0;
+      this.currentStallDrainDps = 0;
+    }
+    if (sourceTeam === 'LEFT') {
+      this.playerTotalDamageDealt += amount;
+    } else if (sourceTeam === 'RIGHT') {
+      this.botTotalDamageDealt += amount;
+    }
+  }
+
+  public isAnyUnitInCombat(): boolean {
+    for (let i = 0; i < this.playerUnits.length; i++) {
+      const u = this.playerUnits[i]!;
+      if (u.isAlive && u.state === 'ATTACK') return true;
+    }
+    for (let i = 0; i < this.botUnits.length; i++) {
+      const u = this.botUnits[i]!;
+      if (u.isAlive && u.state === 'ATTACK') return true;
+    }
+    return false;
   }
 
   public setBotDifficulty(diff: BotDifficulty): void {
@@ -152,7 +237,19 @@ export class World {
 
   public reset(): void {
     this.status = 'PLAYING';
+    this.endReason = null;
     this.matchTime = 0;
+    this.stallTimer = 0;
+    this.isStallDrainActive = false;
+    this.stallDrainDuration = 0;
+    this.currentStallDrainDps = 0;
+    this.hasEverStalled = false;
+    this.isSuddenDeath = false;
+    this.autoRestartTimer = null;
+    this.autoRestartCancelled = false;
+    this.playerTotalDamageDealt = 0;
+    this.botTotalDamageDealt = 0;
+    this.damageDealtInTick = false;
     this.playerBaseHp = BASE_MAX_HP;
     this.botBaseHp = BASE_MAX_HP;
 
@@ -180,11 +277,40 @@ export class World {
     this.notifySubscribers();
   }
 
+  private onMatchEnded(): void {
+    if (!this.isHeadless) {
+      if (this.status === 'VICTORY') {
+        audioSynth.playVictory();
+      } else if (this.status === 'DEFEAT' || this.status === 'DRAW') {
+        audioSynth.playDefeat();
+      }
+    }
+    if (this.matchConfig.autoRestartDelaySec !== null && this.matchConfig.autoRestartDelaySec > 0) {
+      this.autoRestartTimer = this.matchConfig.autoRestartDelaySec;
+      this.autoRestartCancelled = false;
+    }
+  }
+
   /**
    * Bước chạy mô phỏng chính (Fixed Timestep 60Hz)
    */
   public update(dt: number): void {
-    if (this.status !== 'PLAYING') return;
+    if (this.status !== 'PLAYING') {
+      if (this.autoRestartTimer !== null && !this.autoRestartCancelled) {
+        this.autoRestartTimer -= dt;
+        if (this.autoRestartTimer <= 0) {
+          this.autoRestartTimer = null;
+          this.reset();
+          return;
+        }
+      }
+      this.hudNotifyCooldown -= dt;
+      if (this.hudNotifyCooldown <= 0) {
+        this.hudNotifyCooldown = 0.08;
+        this.notifySubscribers();
+      }
+      return;
+    }
 
     this.matchTime += dt;
 
@@ -223,7 +349,7 @@ export class World {
         const s = item.spec;
         const proj = this.projectilePool.acquire();
         proj.init(
-          `ult_shell_${Date.now()}_${Math.random()}`,
+          `ult_shell_${Date.now()}_${this.random()}`,
           s.startX,
           s.startY,
           s.targetX,
@@ -322,15 +448,82 @@ export class World {
       }
     }
 
-    // 10. Kiểm tra Điều Kiện Thắng / Thua
-    if (this.playerBaseHp <= 0) {
-      this.playerBaseHp = 0;
-      this.status = 'DEFEAT';
-      if (!this.isHeadless) audioSynth.playDefeat();
-    } else if (this.botBaseHp <= 0) {
-      this.botBaseHp = 0;
-      this.status = 'VICTORY';
-      if (!this.isHeadless) audioSynth.playVictory();
+    // 10. Kiểm tra Bế Tắc (Stall Detection & Drain)
+    if (this.damageDealtInTick) {
+      this.stallTimer = 0;
+      if (this.isStallDrainActive) {
+        this.isStallDrainActive = false;
+        this.stallDrainDuration = 0;
+        this.currentStallDrainDps = 0;
+      }
+      this.damageDealtInTick = false;
+    } else if (this.isAnyUnitInCombat()) {
+      this.stallTimer = 0;
+    } else {
+      if (this.matchConfig.stallDetectSec !== null) {
+        this.stallTimer += dt;
+        if (this.stallTimer >= this.matchConfig.stallDetectSec) {
+          this.isStallDrainActive = true;
+          this.hasEverStalled = true;
+        }
+      }
+    }
+
+    if (this.isStallDrainActive) {
+      this.stallDrainDuration += dt;
+      const rampSteps = Math.floor(this.stallDrainDuration / this.matchConfig.stallDrainRampIntervalSec);
+      this.currentStallDrainDps = this.matchConfig.stallDrainInitialDps + rampSteps * this.matchConfig.stallDrainRampDps;
+
+      const drainAmount = this.currentStallDrainDps * dt;
+      this.playerBaseHp = Math.max(0, this.playerBaseHp - drainAmount);
+      this.botBaseHp = Math.max(0, this.botBaseHp - drainAmount);
+    }
+
+    // 11. Kiểm tra Hết Giờ (Timeout / Sudden Death)
+    if (this.matchConfig.matchDurationSec !== null && !this.isSuddenDeath) {
+      if (this.matchTime >= this.matchConfig.matchDurationSec) {
+        if (this.playerBaseHp > this.botBaseHp) {
+          this.status = 'VICTORY';
+          this.endReason = 'TIMEOUT';
+          this.onMatchEnded();
+        } else if (this.botBaseHp > this.playerBaseHp) {
+          this.status = 'DEFEAT';
+          this.endReason = 'TIMEOUT';
+          this.onMatchEnded();
+        } else {
+          // Bằng máu căn cứ: vào Sudden Death (tiếp tục đánh cho đến khi một căn cứ bị phá)
+          this.isSuddenDeath = true;
+        }
+      }
+    }
+
+    // 12. Kiểm tra Điều Kiện Thắng / Thua (Căn cứ bị phá hủy hoặc rút cạn máu)
+    if (this.status === 'PLAYING') {
+      if (this.playerBaseHp <= 0 && this.botBaseHp <= 0) {
+        this.playerBaseHp = 0;
+        this.botBaseHp = 0;
+        if (this.playerTotalDamageDealt > this.botTotalDamageDealt) {
+          this.status = 'VICTORY';
+          this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
+        } else if (this.botTotalDamageDealt > this.playerTotalDamageDealt) {
+          this.status = 'DEFEAT';
+          this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
+        } else {
+          this.status = 'DRAW';
+          this.endReason = 'DRAW';
+        }
+        this.onMatchEnded();
+      } else if (this.playerBaseHp <= 0) {
+        this.playerBaseHp = 0;
+        this.status = 'DEFEAT';
+        this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
+        this.onMatchEnded();
+      } else if (this.botBaseHp <= 0) {
+        this.botBaseHp = 0;
+        this.status = 'VICTORY';
+        this.endReason = this.isStallDrainActive ? 'STALL_DRAIN' : 'BASE_DESTROYED';
+        this.onMatchEnded();
+      }
     }
 
     // 11. Giới hạn tần suất re-render của React HUD (Throttle ~12.5 FPS / 80ms)
@@ -349,6 +542,7 @@ export class World {
   private handleCombatEvent(evt: any): void {
     switch (evt.type) {
       case 'MELEE_HIT':
+        this.recordDamage(evt.damage, evt.sourceUnit?.team || null);
         if (!this.isHeadless) {
           audioSynth.playMeleeHit();
           particleSystem.spawnHitSparks(evt.x, evt.y);
@@ -361,8 +555,10 @@ export class World {
         if (evt.targetBase || !evt.targetUnit) {
           if (evt.sourceUnit.team === 'LEFT') {
             this.botBaseHp -= evt.damage;
+            this.recordDamage(evt.damage, 'LEFT');
           } else {
             this.playerBaseHp -= evt.damage;
+            this.recordDamage(evt.damage, 'RIGHT');
           }
         }
         break;
@@ -405,6 +601,7 @@ export class World {
       }
 
       case 'SHOCKWAVE': {
+        this.recordDamage(evt.damage, evt.sourceUnit?.team || null);
         // Sóng chấn động đẩy lùi từ Quantum Synthesizer Mech
         if (!this.isHeadless) {
           audioSynth.playExplosion();
@@ -483,6 +680,7 @@ export class World {
             enemy.status.applyEffect(eff.type, eff.duration, eff.value, 'REFRESH');
           }
           const dmg = proj.damagePercentMaxHp > 0 ? enemy.maxHp * proj.damagePercentMaxHp : proj.damage;
+          this.recordDamage(dmg, proj.sourceTeam);
           enemy.takeDamage(dmg, proj.attackerType, null, (evt) => this.handleCombatEvent(evt));
           this.addFloatingText(`-${Math.round(dmg)}`, enemy.x, enemy.y - 20, proj.isUltimateBarrage ? 0xfbbf24 : 0xf87171);
         }
@@ -491,9 +689,11 @@ export class World {
         const baseReach = Math.max(90, proj.splashRadius);
         if (proj.sourceTeam === 'LEFT' && (Math.abs(proj.x - this.baseRightX) <= baseReach || proj.x >= this.baseRightX)) {
           this.botBaseHp -= proj.damage;
+          this.recordDamage(proj.damage, 'LEFT');
           this.addFloatingText(`-${Math.round(proj.damage)}`, this.baseRightX, 480, 0xf87171);
         } else if (proj.sourceTeam === 'RIGHT' && (Math.abs(proj.x - this.baseLeftX) <= baseReach || proj.x <= this.baseLeftX)) {
           this.playerBaseHp -= proj.damage;
+          this.recordDamage(proj.damage, 'RIGHT');
           this.addFloatingText(`-${Math.round(proj.damage)}`, this.baseLeftX, 480, 0xf87171);
         }
       }
@@ -523,21 +723,24 @@ export class World {
 
       // 2. Kiểm tra xác suất Hack chuyển phe của Neural Hacker (15%, không convert Tank)
       if (proj.convertChance > 0 && hitUnit.config.type !== 'TANK') {
-        if (Math.random() < proj.convertChance) {
+        if (this.random() < proj.convertChance) {
           this.convertUnitTeam(hitUnit);
           return;
         }
       }
 
+      this.recordDamage(proj.damage, proj.sourceTeam);
       hitUnit.takeDamage(proj.damage, proj.attackerType, null, (evt) => this.handleCombatEvent(evt));
       this.addFloatingText(`-${Math.round(proj.damage)}`, hitUnit.x, hitUnit.y - 20, 0xf87171);
     } else {
       // Nếu đạn bay trúng Căn cứ
       if (proj.sourceTeam === 'LEFT' && (Math.abs(proj.x - this.baseRightX) <= 90 || proj.x >= this.baseRightX)) {
         this.botBaseHp -= proj.damage;
+        this.recordDamage(proj.damage, 'LEFT');
         this.addFloatingText(`-${Math.round(proj.damage)}`, this.baseRightX, 480, 0xf87171);
       } else if (proj.sourceTeam === 'RIGHT' && (Math.abs(proj.x - this.baseLeftX) <= 90 || proj.x <= this.baseLeftX)) {
         this.playerBaseHp -= proj.damage;
+        this.recordDamage(proj.damage, 'RIGHT');
         this.addFloatingText(`-${Math.round(proj.damage)}`, this.baseLeftX, 480, 0xf87171);
       }
     }
@@ -551,7 +754,7 @@ export class World {
 
     const proj = this.projectilePool.acquire();
     proj.init(
-      `turret_proj_${Date.now()}_${Math.random()}`,
+      `turret_proj_${Date.now()}_${this.random()}`,
       turret.x,
       turret.y,
       target.x,
@@ -850,6 +1053,7 @@ export class World {
       ageMgr.currentAge,
       enemies,
       (target, damage) => {
+        this.recordDamage(damage, team);
         this.addFloatingText(`-${Math.round(damage)}`, target.x, target.y - 25, 0xef4444);
       },
       (evt) => this.handleCombatEvent(evt)
@@ -944,7 +1148,7 @@ export class World {
 
   public addFloatingText(text: string, x: number, y: number, color: number): void {
     this.floatingTexts.push({
-      id: `ft_${Date.now()}_${Math.random()}`,
+      id: `ft_${Date.now()}_${this.random()}`,
       text,
       x,
       y,
@@ -970,8 +1174,14 @@ export class World {
   public getSnapshot(): WorldSnapshot {
     return {
       status: this.status,
+      endReason: this.endReason,
       gameMode: this.gameMode,
       matchTime: this.matchTime,
+      matchDurationSec: this.matchConfig.matchDurationSec,
+      isSuddenDeath: this.isSuddenDeath,
+      stallDrainActive: this.isStallDrainActive,
+      stallDrainDps: this.currentStallDrainDps,
+      autoRestartRemaining: this.autoRestartTimer,
       playerBaseHp: this.playerBaseHp,
       botBaseHp: this.botBaseHp,
       playerAge: this.playerAge.currentAge,
