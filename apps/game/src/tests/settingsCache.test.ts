@@ -5,7 +5,7 @@ import { GameRenderer } from '../engine/Renderer';
 import { Unit } from '../engine/Unit';
 import { World } from '../engine/World';
 
-describe('PHẦN 2: Kiểm thử Cache Settings & Khử localStorage khỏi Render Loop', () => {
+describe('PHẦN 2 & 3: Kiểm thử Cache Settings, Khử localStorage khỏi Render Loop & Validation', () => {
   const mockStorage = new Map<string, string>();
   let getItemSpy: ReturnType<typeof vi.fn>;
   let setItemSpy: ReturnType<typeof vi.fn>;
@@ -92,19 +92,14 @@ describe('PHẦN 2: Kiểm thử Cache Settings & Khử localStorage khỏi Rend
   });
 
   it('4. Lắng nghe sự kiện Storage liên cửa sổ (OBS / Electron) cập nhật ngay bộ nhớ đệm', () => {
-    // Giả lập cửa sổ khác (OBS Studio hoặc tab thứ hai) ghi vào storage
     const externalWeapon = 'data:image/png;base64,fromExternalWindow';
     mockStorage.set(STORAGE_KEYS.CUSTOM_WEAPON, externalWeapon);
 
-    // Kích hoạt hàm xử lý sự kiện ngoại vi
     (gameSettings as any).handleExternalUpdate(STORAGE_KEYS.CUSTOM_WEAPON, externalWeapon);
-
-    // In-memory cache cập nhật ngay lập tức mà không cần F5/reload
     expect(gameSettings.getCustomWeapon()).toBe(externalWeapon);
   });
 
   it('5. Phòng vệ an toàn khi Storage bị quăng lỗi SecurityError (OBS / Electron sandbox)', () => {
-    // Giả lập storage bị block hoặc throw Exception
     (globalThis as any).localStorage.getItem = vi.fn(() => {
       throw new Error('SecurityError: The operation is insecure.');
     });
@@ -112,14 +107,66 @@ describe('PHẦN 2: Kiểm thử Cache Settings & Khử localStorage khỏi Rend
       throw new Error('SecurityError: The operation is insecure.');
     });
 
-    // Reload không bị sập (crash)
     expect(() => gameSettings.reloadFromStorage()).not.toThrow();
-    // Vẫn trả về giá trị mặc định an toàn
     expect(gameSettings.getNickname()).toBe('Chiến Binh');
     expect(gameSettings.getCustomWeapon()).toBeNull();
 
-    // Ghi cài đặt mới cũng không bị sập app
     expect(() => gameSettings.setNickname('Chiến Binh An Toàn')).not.toThrow();
     expect(gameSettings.getNickname()).toBe('Chiến Binh An Toàn');
+  });
+
+  it('6. [4a Validation] Từ chối nạp dữ liệu ngoại vi không hợp lệ từ storage/BroadcastChannel', () => {
+    // 1. Data URL độc hại hoặc không đúng định dạng hình ảnh
+    gameSettings.setCustomWeapon('data:image/png;base64,validWeapon');
+    expect(gameSettings.getCustomWeapon()).toBe('data:image/png;base64,validWeapon');
+
+    // Cửa sổ ngoài gửi chuỗi JavaScript hoặc payload rác
+    gameSettings.handleExternalUpdate(STORAGE_KEYS.CUSTOM_WEAPON, 'javascript:alert(1)');
+    // Bộ nhớ đệm từ chối và giữ nguyên giá trị hợp lệ trước đó
+    expect(gameSettings.getCustomWeapon()).toBe('data:image/png;base64,validWeapon');
+
+    // 2. Grid sai kích thước (ví dụ 10x10 thay vì 32x32)
+    const invalidGrid = JSON.stringify([['#000000']]);
+    gameSettings.handleExternalUpdate(STORAGE_KEYS.CUSTOM_WEAPON_GRID, invalidGrid);
+    expect(gameSettings.getCustomWeaponGrid()).toBeNull();
+
+    // 3. Nickname quá dài (> 32 ký tự) được cắt gọt tự động
+    const superLongName = 'Người Chơi Có Tên Siêu Dài Vượt Quá Ba Mươi Hai Ký Tự Trong Trận Đấu';
+    gameSettings.handleExternalUpdate(STORAGE_KEYS.NICKNAME, superLongName);
+    expect(gameSettings.getNickname().length).toBeLessThanOrEqual(32);
+    expect(gameSettings.getNickname()).toBe(superLongName.trim().slice(0, 32));
+  });
+
+  it('7. [4b Storage Clear] Xử lý sự kiện storage khi clear (key = null) khôi phục mặc định sạch sẽ', () => {
+    gameSettings.setCustomWeapon('data:image/png;base64,existingWeapon');
+    gameSettings.setNickname('Chiến Tướng');
+    expect(gameSettings.getCustomWeapon()).toBe('data:image/png;base64,existingWeapon');
+    expect(gameSettings.getNickname()).toBe('Chiến Tướng');
+
+    // Kích hoạt sự kiện storage clear (tương đương khi người dùng hoặc cửa sổ khác gọi localStorage.clear())
+    gameSettings.handleExternalUpdate(null, null);
+
+    // Toàn bộ cài đặt trong RAM tự động hoàn nguyên về mặc định an toàn
+    expect(gameSettings.getCustomWeapon()).toBeNull();
+    expect(gameSettings.getCustomWeaponGrid()).toBeNull();
+    expect(gameSettings.getNickname()).toBe('Chiến Binh');
+    expect(gameSettings.getFrameOverridesRaw()).toBeNull();
+  });
+
+  it('8. [4c Quota Exceeded] Lỗi hạn mức setItem QuotaExceededError KHÔNG làm hỏng bộ nhớ đệm', () => {
+    // Giả lập storage bị tràn hạn mức (QuotaExceededError)
+    (globalThis as any).localStorage.setItem = vi.fn(() => {
+      const err = new Error('QuotaExceededError: DOMException 22');
+      err.name = 'QuotaExceededError';
+      throw err;
+    });
+
+    const newWeapon = 'data:image/png;base64,validNewWeaponData';
+    // Ghi cài đặt: không bị ném exception ra ngoài làm sập app
+    expect(() => gameSettings.setCustomWeapon(newWeapon)).not.toThrow();
+
+    // RAM cache vẫn lưu trữ chính xác giá trị mới, không bị biến dạng hay mất mát
+    expect(gameSettings.getCustomWeapon()).toBe(newWeapon);
+    expect(gameSettings.isStorageAvailable).toBe(false);
   });
 });
