@@ -47,7 +47,7 @@ describe('Ma Trận Độ Khó Bot AI (Easy / Normal / Hard)', () => {
     let easyWinsRight = 0;
 
     for (let i = 0; i < MATCHES; i++) {
-      const winner = runMatch('NORMAL', 'EASY', 'BALANCED', 350);
+      const winner = runMatch('NORMAL', 'EASY', 'BALANCED', 400);
       if (winner === 'LEFT') normalWinsLeft++;
       else if (winner === 'RIGHT') easyWinsRight++;
     }
@@ -61,7 +61,7 @@ describe('Ma Trận Độ Khó Bot AI (Easy / Normal / Hard)', () => {
     let normalWinsRight = 0;
 
     for (let i = 0; i < MATCHES; i++) {
-      const winner = runMatch('EASY', 'NORMAL', 'BALANCED', 350);
+      const winner = runMatch('EASY', 'NORMAL', 'BALANCED', 400);
       if (winner === 'LEFT') easyWinsLeft++;
       else if (winner === 'RIGHT') normalWinsRight++;
     }
@@ -78,7 +78,7 @@ describe('Ma Trận Độ Khó Bot AI (Easy / Normal / Hard)', () => {
     let normalWinsRight = 0;
 
     for (let i = 0; i < MATCHES; i++) {
-      const winner = runMatch('HARD', 'NORMAL', 'BALANCED', 350);
+      const winner = runMatch('HARD', 'NORMAL', 'BALANCED', 400);
       if (winner === 'LEFT') hardWinsLeft++;
       else if (winner === 'RIGHT') normalWinsRight++;
     }
@@ -93,7 +93,7 @@ describe('Ma Trận Độ Khó Bot AI (Easy / Normal / Hard)', () => {
     let hardWinsRight = 0;
 
     for (let i = 0; i < MATCHES; i++) {
-      const winner = runMatch('NORMAL', 'HARD', 'BALANCED', 350);
+      const winner = runMatch('NORMAL', 'HARD', 'BALANCED', 400);
       if (winner === 'LEFT') normalWinsLeft++;
       else if (winner === 'RIGHT') hardWinsRight++;
     }

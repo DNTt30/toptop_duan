@@ -157,6 +157,7 @@ export class World {
     this.isHeadless = isHeadless;
     this.playerUltimate.random = () => this.random();
     this.botUltimate.random = () => this.random();
+    this.botAI.rng = () => this.random();
   }
 
   public initDefaultTurrets(): void {
@@ -487,7 +488,8 @@ export class World {
           this.botUnits,
           this.playerUnits,
           () => this.queueCommand({ team: 'RIGHT', type: 'ULTIMATE' }),
-          this.botUpgrades
+          this.botUpgrades,
+          this.playerAge.currentAge
         );
       }
       this.processCommandQueue();

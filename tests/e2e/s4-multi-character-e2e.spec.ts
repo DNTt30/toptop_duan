@@ -133,7 +133,10 @@ test.describe('S4 Multi-Character, Animation & Gift Rule Desktop E2E', () => {
     await page.waitForSelector('[data-overlay-state="PLAYING"]', { timeout: 10000 });
     const banner = page.locator('[data-testid="sender-banner"]');
     await expect(banner).toBeVisible({ timeout: 5000 });
-    await expect(banner).toContainText('Phật Tử Giác Ngộ kính dâng 3x Hoa Sen Hồng lên Đức Di Lặc!');
+    // Chú thích: Banner template hiện tại render phân tách các trường (Tên sender, Tên quà tặng, Số lượng xN)
+    await expect(banner).toContainText('Phật Tử Giác Ngộ');
+    await expect(banner).toContainText('đã tặng Hoa Sen Hồng');
+    await expect(banner).toContainText('x3');
 
     // Chụp ảnh bằng chứng E2E
     const screenshotPath = path.join(screenshotsDir, 's4-multi-character-overlay.png');

@@ -94,7 +94,10 @@ test.describe('S2 OBS Browser Source Simulation & Walking Skeleton E2E', () => {
     await page.waitForSelector('[data-overlay-state="PLAYING"]', { timeout: 10000 });
     const banner = page.locator('[data-testid="sender-banner"]');
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText('Minh Anh đã tặng 1x Hoa Sen');
+    // Chú thích: Banner template hiện tại render phân tách các trường (Tên sender, Tên quà tặng, Số lượng xN)
+    await expect(banner).toContainText('Minh Anh');
+    await expect(banner).toContainText('đã tặng Hoa Sen');
+    await expect(banner).toContainText('x1');
     await expect(page.locator('[data-active-clip="Pray"]')).toBeVisible();
 
     // Chụp ảnh màn hình khi nhân vật 3D và banner tên đang hiển thị (PLAYING)

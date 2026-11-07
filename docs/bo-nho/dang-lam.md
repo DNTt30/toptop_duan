@@ -106,5 +106,20 @@
   - **Kiểm thử hệ thống & Bảo mật Production:** Typecheck 0 lỗi, 51/51 unit tests PASS, 5/5 integration tests PASS, production bundle 0 rò rỉ biến toàn cục `__world`, `__netSync`, `gameSettings`. Xác nhận 2 test E2E OBS hỏng từ trước tại commit `6cd7976` do format chuỗi text tiếng Việt.
   - **Cập nhật Báo Cáo:** Đã xuất đầy đủ vào `BALANCE_REPORT.md`.
 
+- **EVAL-12 (Nhịp Trận & Chiến Thuật Người Chơi Giả - Task T1c PHẦN 4) ✅:**
+  - **BƯỚC 1 (Đo thực nghiệm 8.000 ván RUSH & TIMING):**
+    + RUSH vs BALANCED: Phá căn cứ 99.2% - 99.3%, Winrate RUSH 99.7% - 99.8%, thời lượng trung vị 450.9s - 452.1s.
+    + RUSH vs SPAM / FOCUS: Phá căn cứ 99.6% - 99.9%, Winrate RUSH 99.8% - 100%, trung vị 430s - 442s.
+    + TIMING vs BALANCED: Winrate TIMING 91.8% - 93.9%.
+  - **BƯỚC 2 (Kết luận điều kiện dừng):**
+    + RUSH phá căn cứ >= 99% trong < 600s -> Dừng ở Bước 2 và xác nhận: Bế tắc chỉ là hiện tượng Bot vs Bot do phong cách phòng thủ bị động; người chơi chủ động dứt điểm trận đấu dễ dàng trong 7 phút.
+  - **BƯỚC 3 (Kiểm chứng toàn diện):**
+    + Typecheck monorepo 0 lỗi.
+    + Unit test suite 51/51 tests PASS 100%.
+    + Cập nhật template banner cho 2 test E2E Playwright s2 và s4: 3/3 tests PASS (45.8s).
+    + Build production thành công 1.08s, 0 rò rỉ biến toàn cục.
+    + Rà soát 134 test cases integration.
+    + Cập nhật BALANCE_REPORT.md.
+
 - **Đồng Bộ Git Remote:**
   - Đã kết nối và đẩy toàn bộ mã nguồn dự án lên GitHub Repository: https://github.com/DNTt30/toptop_duan.git (branch main, clean working tree).

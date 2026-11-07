@@ -29,6 +29,12 @@ export interface MatchOutcome {
   zeroTicksLeftPct: number;
   zeroTicksRightPct: number;
   frontlineBias: number;
+  leftAge: number;
+  rightAge: number;
+  leftBaseHp: number;
+  rightBaseHp: number;
+  leftTurretCount: number;
+  rightTurretCount: number;
 }
 
 export function runSingleMatchFast(task: MatchTask): MatchOutcome {
@@ -41,7 +47,8 @@ export function runSingleMatchFast(task: MatchTask): MatchOutcome {
     world.random = prng;
     world.setGameMode('SOLO');
 
-    const leftAI = new BotAI(task.leftDiff, 'LEFT', task.leftStrat);
+    const leftAI = new BotAI(task.leftDiff, 'LEFT', task.leftStrat, prng);
+    world.botAI.rng = prng;
     world.botAI.team = 'RIGHT';
     world.botAI.setDifficulty(task.rightDiff);
     world.botAI.setStrategy(task.rightStrat);
@@ -64,7 +71,8 @@ export function runSingleMatchFast(task: MatchTask): MatchOutcome {
         world.playerUnits,
         world.botUnits,
         () => world.triggerUltimate('LEFT'),
-        world.playerUpgrades
+        world.playerUpgrades,
+        world.botAge.currentAge
       );
       world.update(dt);
 
@@ -93,6 +101,12 @@ export function runSingleMatchFast(task: MatchTask): MatchOutcome {
           zeroTicksLeftPct: Number(((zeroTicksLeft / totalTicks) * 100).toFixed(1)),
           zeroTicksRightPct: Number(((zeroTicksRight / totalTicks) * 100).toFixed(1)),
           frontlineBias: Number((avgFl - LANE_WIDTH / 2).toFixed(1)),
+          leftAge: world.playerAge.currentAge,
+          rightAge: world.botAge.currentAge,
+          leftBaseHp: world.playerBaseHp,
+          rightBaseHp: world.botBaseHp,
+          leftTurretCount: world.playerTurrets.slots.filter(s => s !== null).length,
+          rightTurretCount: world.botTurrets.slots.filter(s => s !== null).length,
         };
       }
     }
@@ -106,6 +120,12 @@ export function runSingleMatchFast(task: MatchTask): MatchOutcome {
       zeroTicksLeftPct: Number(((zeroTicksLeft / totalTicks) * 100).toFixed(1)),
       zeroTicksRightPct: Number(((zeroTicksRight / totalTicks) * 100).toFixed(1)),
       frontlineBias: Number((avgFl - LANE_WIDTH / 2).toFixed(1)),
+      leftAge: world.playerAge.currentAge,
+      rightAge: world.botAge.currentAge,
+      leftBaseHp: world.playerBaseHp,
+      rightBaseHp: world.botBaseHp,
+      leftTurretCount: world.playerTurrets.slots.filter(s => s !== null).length,
+      rightTurretCount: world.botTurrets.slots.filter(s => s !== null).length,
     };
   } finally {
     Math.random = origRandom;

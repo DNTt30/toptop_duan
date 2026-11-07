@@ -100,7 +100,8 @@ export function runSingleMatch(
   const modeConfig = getModeMatchConfig(options.profile);
   world.setMatchConfig(modeConfig);
 
-  const leftAI = new BotAI(leftDifficulty, 'LEFT', leftStrategy);
+  const leftAI = new BotAI(leftDifficulty, 'LEFT', leftStrategy, () => world.random());
+  world.botAI.rng = () => world.random();
   world.botAI.team = 'RIGHT';
   world.botAI.setDifficulty(rightDifficulty);
   world.botAI.setStrategy(rightStrategy);
@@ -339,6 +340,8 @@ export function runSimulationSuite(customOptions?: Partial<SimOptions>): MatchMe
     SPAM_UNITS: { matchesDecided: 0, wins: 0, losses: 0, totalUpgrades: 0, totalGoldEarned: 0, totalGoldSpent: 0 },
     FOCUS_UPGRADE: { matchesDecided: 0, wins: 0, losses: 0, totalUpgrades: 0, totalGoldEarned: 0, totalGoldSpent: 0 },
     BALANCED: { matchesDecided: 0, wins: 0, losses: 0, totalUpgrades: 0, totalGoldEarned: 0, totalGoldSpent: 0 },
+    RUSH: { matchesDecided: 0, wins: 0, losses: 0, totalUpgrades: 0, totalGoldEarned: 0, totalGoldSpent: 0 },
+    TIMING: { matchesDecided: 0, wins: 0, losses: 0, totalUpgrades: 0, totalGoldEarned: 0, totalGoldSpent: 0 },
   };
 
   for (const m of allMatches) {
