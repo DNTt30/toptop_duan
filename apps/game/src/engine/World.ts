@@ -44,7 +44,7 @@ export interface FloatingText {
 }
 
 export type GameStatus = 'PAUSED' | 'PLAYING' | 'VICTORY' | 'DEFEAT' | 'DRAW';
-export type MatchEndReason = 'BASE_DESTROYED' | 'STALL_DRAIN' | 'TIMEOUT' | 'DRAW';
+export type MatchEndReason = 'BASE_DESTROYED' | 'STALL_DRAIN' | 'TIMEOUT' | 'DRAW' | 'UNFINISHED';
 
 export interface WorldSnapshot {
   status: GameStatus;
