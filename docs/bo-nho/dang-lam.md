@@ -122,4 +122,4 @@
     + Cập nhật BALANCE_REPORT.md.
 
 - **Đồng Bộ Git Remote:**
-  - Đã kết nối và đẩy toàn bộ mã nguồn dự án lên GitHub Repository: https://github.com/DNTt30/toptop_duan.git (branch main, clean working tree).
+  - Đã kết nối và đẩy toàn bộ mã nguồn dự án lên GitHub Repository: https://github.com/DNTt30/toptop_duan.git (nhánh main và nhánh fix/build-lobby, clean working tree).
