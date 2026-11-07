@@ -1,0 +1,232 @@
+/* ==========================================================================
+ * BuddhaLive Design System — Component primitives (S10-T01)
+ * Phụ thuộc: buddhalive-tokens.css (import trước file này).
+ *
+ * Quy ước: mọi class có tiền tố `bl-` để không va chạm style inline cũ.
+ * File này KHÔNG đổi bố cục màn hình hiện có; các task S10-T02..T06 sẽ
+ * dần thay style inline bằng các class bên dưới.
+ * ========================================================================== */
+
+/* ---------- Base (chỉ áp dụng khi body đã gắn theme) ---------- */
+body[data-bl-theme] {
+  margin: 0;
+  background: var(--bl-bg-app);
+  color: var(--bl-fg-primary);
+  font-family: var(--bl-font-sans);
+  line-height: var(--bl-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Chỉ áp cho phần tử dùng class bl-* để không làm lệch layout inline cũ (S1–S9). */
+[class^='bl-'],
+[class*=' bl-'] {
+  box-sizing: border-box;
+}
+
+body[data-bl-theme] :focus-visible {
+  outline: none;
+  box-shadow: var(--bl-focus-ring);
+}
+
+/* ---------- Typography helpers ---------- */
+.bl-heading-1 { font: var(--bl-weight-bold) var(--bl-text-2xl)/var(--bl-leading-tight) var(--bl-font-display); margin: 0; }
+.bl-heading-2 { font: var(--bl-weight-semibold) var(--bl-text-xl)/var(--bl-leading-tight) var(--bl-font-display); margin: 0; }
+.bl-heading-3 { font: var(--bl-weight-semibold) var(--bl-text-lg)/var(--bl-leading-tight) var(--bl-font-sans); margin: 0; }
+.bl-text-body { font-size: var(--bl-text-md); color: var(--bl-fg-primary); }
+.bl-text-secondary { font-size: var(--bl-text-md); color: var(--bl-fg-secondary); }
+.bl-text-caption { font-size: var(--bl-text-xs); color: var(--bl-fg-muted); letter-spacing: 0.02em; }
+.bl-text-mono { font-family: var(--bl-font-mono); font-size: var(--bl-text-sm); }
+.bl-eyebrow {
+  font-size: var(--bl-text-xs);
+  font-weight: var(--bl-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bl-fg-muted);
+}
+
+/* ---------- Button ---------- */
+.bl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bl-space-2);
+  height: var(--bl-control-height-md);
+  padding: 0 var(--bl-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--bl-radius-sm);
+  font: var(--bl-weight-semibold) var(--bl-text-md)/1 var(--bl-font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--bl-dur-fast) var(--bl-ease-out),
+    border-color var(--bl-dur-fast) var(--bl-ease-out),
+    color var(--bl-dur-fast) var(--bl-ease-out),
+    opacity var(--bl-dur-fast) var(--bl-ease-out);
+}
+.bl-btn:disabled,
+.bl-btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bl-btn--sm { height: var(--bl-control-height-sm); padding: 0 var(--bl-space-3); font-size: var(--bl-text-sm); }
+.bl-btn--icon { width: var(--bl-control-height-md); padding: 0; }
+.bl-btn--sm.bl-btn--icon { width: var(--bl-control-height-sm); }
+
+/* Primary: hành động chính (vàng kim) */
+.bl-btn--primary { background: var(--bl-accent); color: var(--bl-fg-on-accent); }
+.bl-btn--primary:not(:disabled):hover { background: var(--bl-accent-strong); }
+
+/* Secondary: hành động thường */
+.bl-btn--secondary { background: var(--bl-bg-surface-raised); color: var(--bl-fg-primary); border-color: var(--bl-border-default); }
+.bl-btn--secondary:not(:disabled):hover { border-color: var(--bl-border-strong); background: var(--bl-bg-hover); }
+
+/* Ghost: hành động phụ, trong toolbar */
+.bl-btn--ghost { background: transparent; color: var(--bl-fg-secondary); }
+.bl-btn--ghost:not(:disabled):hover { background: var(--bl-bg-hover); color: var(--bl-fg-primary); }
+
+/* Danger: Clear queue, Xóa, Thu hồi phiên — luôn đi kèm xác nhận */
+.bl-btn--danger { background: var(--bl-status-error-bg); color: var(--bl-status-error-fg); border-color: rgba(239, 68, 68, 0.4); }
+.bl-btn--danger:not(:disabled):hover { background: rgba(239, 68, 68, 0.24); border-color: var(--bl-status-error); }
+
+/* Warning: Pause */
+.bl-btn--warning { background: var(--bl-status-warn-bg); color: var(--bl-status-warn-fg); border-color: rgba(245, 158, 11, 0.4); }
+.bl-btn--warning:not(:disabled):hover { background: rgba(245, 158, 11, 0.24); border-color: var(--bl-status-warn); }
+
+/* ---------- Card ---------- */
+.bl-card {
+  background: var(--bl-bg-surface);
+  border: 1px solid var(--bl-border-subtle);
+  border-radius: var(--bl-radius-md);
+  padding: var(--bl-space-4);
+  box-shadow: var(--bl-shadow-card);
+}
+.bl-card--raised { background: var(--bl-bg-surface-raised); }
+.bl-card--sunken { background: var(--bl-bg-surface-sunken); box-shadow: none; }
+.bl-card--interactive { cursor: pointer; transition: border-color var(--bl-dur-fast) var(--bl-ease-out); }
+.bl-card--interactive:hover { border-color: var(--bl-border-strong); }
+.bl-card--selected { border-color: var(--bl-accent); box-shadow: var(--bl-shadow-card), 0 0 0 1px var(--bl-accent); }
+.bl-card--sacred {
+  background: var(--bl-bg-surface-raised);
+  border-color: var(--bl-border-default);
+  box-shadow: var(--bl-shadow-pop), var(--bl-shadow-sacred-glow);
+  backdrop-filter: blur(6px);
+}
+.bl-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bl-space-3);
+  margin-bottom: var(--bl-space-3);
+}
+
+/* ---------- Badge / Status ---------- */
+.bl-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bl-space-1);
+  height: 22px;
+  padding: 0 var(--bl-space-2);
+  border-radius: var(--bl-radius-full);
+  font: var(--bl-weight-semibold) var(--bl-text-xs)/1 var(--bl-font-sans);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  background: var(--bl-status-idle-bg);
+  color: var(--bl-status-idle-fg);
+}
+.bl-badge--ok { background: var(--bl-status-ok-bg); color: var(--bl-status-ok-fg); }
+.bl-badge--warn { background: var(--bl-status-warn-bg); color: var(--bl-status-warn-fg); }
+.bl-badge--error { background: var(--bl-status-error-bg); color: var(--bl-status-error-fg); }
+.bl-badge--info { background: var(--bl-status-info-bg); color: var(--bl-status-info-fg); }
+.bl-badge--idle { background: var(--bl-status-idle-bg); color: var(--bl-status-idle-fg); }
+.bl-badge--accent { background: var(--bl-accent-soft); color: var(--bl-accent-fg); }
+
+/* Chấm trạng thái: dùng kèm chữ, không bao giờ chỉ dựa vào màu */
+.bl-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--bl-radius-full);
+  background: var(--bl-status-idle);
+}
+.bl-status-dot--ok { background: var(--bl-status-ok); }
+.bl-status-dot--warn { background: var(--bl-status-warn); }
+.bl-status-dot--error { background: var(--bl-status-error); }
+.bl-status-dot--info { background: var(--bl-status-info); }
+.bl-status-dot--live { background: var(--bl-status-ok); animation: bl-pulse 1.8s var(--bl-ease-in-out) infinite; }
+
+/* ---------- Empty / Loading / Error states ---------- */
+.bl-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bl-space-2);
+  padding: var(--bl-space-8) var(--bl-space-4);
+  text-align: center;
+  color: var(--bl-fg-secondary);
+  font-size: var(--bl-text-md);
+  border: 1px dashed var(--bl-border-default);
+  border-radius: var(--bl-radius-md);
+}
+.bl-state__icon { font-size: 28px; line-height: 1; opacity: 0.85; }
+.bl-state__title { font-size: var(--bl-text-base); font-weight: var(--bl-weight-semibold); color: var(--bl-fg-primary); }
+.bl-state--error { border-style: solid; border-color: rgba(239, 68, 68, 0.4); background: var(--bl-status-error-bg); color: var(--bl-status-error-fg); }
+.bl-state--error .bl-state__title { color: var(--bl-status-error-fg); }
+
+.bl-skeleton {
+  display: block;
+  min-height: 12px;
+  border-radius: var(--bl-radius-sm);
+  background: linear-gradient(90deg, var(--bl-bg-surface-raised) 0%, var(--bl-bg-hover) 50%, var(--bl-bg-surface-raised) 100%);
+  background-size: 200% 100%;
+  animation: bl-shimmer 1.4s linear infinite;
+}
+
+.bl-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--bl-border-default);
+  border-top-color: var(--bl-accent);
+  border-radius: var(--bl-radius-full);
+  animation: bl-spin 0.8s linear infinite;
+}
+
+/* ---------- Stage label (Overlay: nhãn tên Phật tử, chữ trên nền ảnh) ---------- */
+.bl-stage-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bl-space-1);
+  padding: 2px var(--bl-space-2);
+  border-radius: var(--bl-radius-full);
+  background: rgba(15, 10, 5, 0.55);
+  border: 1px solid var(--bl-border-subtle);
+  color: var(--bl-fg-primary);
+  font: var(--bl-weight-semibold) var(--bl-text-sm)/1.2 var(--bl-font-sans);
+  text-shadow: var(--bl-text-shadow-stage, none);
+  white-space: nowrap;
+}
+
+/* ---------- Keyframes ---------- */
+@keyframes bl-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55); }
+  50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+@keyframes bl-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@keyframes bl-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Tôn trọng thiết lập giảm chuyển động của hệ điều hành */
+@media (prefers-reduced-motion: reduce) {
+  .bl-status-dot--live,
+  .bl-skeleton,
+  .bl-spinner {
+    animation: none;
+  }
+}

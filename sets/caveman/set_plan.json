@@ -1,0 +1,671 @@
+{
+  "schema": "video2dsprite.sprite_set_plan.v1",
+  "tool": {
+    "name": "sprite_set",
+    "version": "0.4.0"
+  },
+  "createdAt": "2026-11-07T03:10:21.002Z",
+  "name": "caveman",
+  "class": "hero",
+  "key": "magenta",
+  "keyRgb": [
+    255,
+    0,
+    255
+  ],
+  "style": "HD hand-drawn 2D game-art",
+  "pronoun": "their",
+  "views": [
+    "side"
+  ],
+  "masters": {
+    "side": {
+      "json": {
+        "path": "master/side/master.json",
+        "sha256": "fb1998e590bab832c5196d73d8754b44fa2efc6569b45e770ae568e980ee2a98",
+        "bytes": 4109
+      },
+      "png": {
+        "path": "master/side/master.png",
+        "sha256": "b1c4423af9adb62c41c20db148234391de0c1ccc83a932f756b6763862d38a41",
+        "bytes": 353798
+      },
+      "sourceName": "master.json",
+      "name": "caveman",
+      "identityRecap": "prehistoric caveman with wooden club (muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club)",
+      "facing": "right",
+      "finish": "hd",
+      "class": "hero",
+      "key": "magenta",
+      "size": [
+        1024,
+        1024
+      ],
+      "subjectBox": [
+        191,
+        140,
+        832,
+        925
+      ],
+      "anchor": [
+        631.5,
+        925.0
+      ],
+      "area": 276838,
+      "framing": {
+        "canvas": [
+          1024,
+          1024
+        ],
+        "subject_height_px": 788,
+        "top_margin_px": 138,
+        "lead_px": 0,
+        "preset": "hero",
+        "subject_bbox": [
+          191,
+          138,
+          833,
+          927
+        ],
+        "anchor": [
+          632.0,
+          927.0
+        ],
+        "opaque_area_px": 274225,
+        "width_limited": false
+      }
+    }
+  },
+  "generation": {
+    "duration": 6.0,
+    "resolution": "720p",
+    "maxTakes": 3,
+    "jobs": 3,
+    "pinLastFrame": "auto",
+    "timeoutSeconds": 1200.0
+  },
+  "finish": {
+    "mode": "hd",
+    "targetHeight": 256,
+    "scaleRefAction": "idle",
+    "palette": null,
+    "colors": null,
+    "outline": null,
+    "canvas": null,
+    "canvasAnchor": null,
+    "colourLock": true
+  },
+  "matteProfile": null,
+  "package": {
+    "formats": [
+      "png",
+      "webm",
+      "packed"
+    ],
+    "tiers": null,
+    "fps": null,
+    "frameMs": null
+  },
+  "library": {
+    "name": "motion-prompts.md",
+    "sha256": "d849193e23a04bf5a5b16305b64ada380ee1bd98cdf04b57e24771a1d098c177"
+  },
+  "clauses": {
+    "never-turn": "The character keeps facing {facing} the whole time: never turns around, never shows {pos} back and never faces the camera.",
+    "camera-locked": "Locked camera and constant character size: no zoom, no push-in, no pull-out, no pan; the character is exactly the same size in every frame, before and after the action.",
+    "constant-size": "The character keeps exactly the same size and proportions as the still in every frame; arms, legs and the weapon never grow longer.",
+    "feet-planted": "Both feet stay planted on the same ground line and the body stays centered in the frame; no stepping away, no sliding, no drifting.",
+    "feet-ground-line": "Every step lands on the same ground line and the body stays centered in the frame; the character never drifts forward, backward, up or down.",
+    "inside-frame": "The whole body, the weapon and every moving part stay fully inside the frame with a clear margin on every side; nothing is cut off by the frame edge.",
+    "flat-background": "The background stays solid flat pure {key} for the whole shot: no floor, no ground, no shadow, no gradient, no glow, no haze, no light.",
+    "no-extras": "Nothing else appears in the frame: no dust, no dirt, no smoke, no puffs, no pebbles, no particles, no orbs, no sparks, no flashes, no projectiles, no arrows, no motion trails, no effects of any kind.",
+    "identity-lock": "CHARACTER LOCK for the whole clip: the face, hair, colours, costume, proportions and every design detail stay exactly as in the still; nothing new grows or appears on the character (no horns, no crests, no extra straps or weapons).",
+    "face-visible": "The whole face is visible in every frame: no hand, weapon, sleeve, hair or effect ever passes in front of the face.",
+    "keep-colours": "The colours stay exactly as in the still in every frame: no tint, no colour shift, no darkening and no glow on the character.",
+    "same-start-end": "The clip starts AND ends in exactly the same pose as the still and holds that pose still at the end.",
+    "starts-from-still": "The first frame is exactly the supplied image: the same pose, position and size; the motion starts from there.",
+    "single-action": "Only one {action}: no repeats, no second strike, no spinning, no jumping, no leaving the frame.",
+    "weapon-shape": "The weapon stays one single weapon of the same length and shape the whole time: never bending, never doubling, no second blade, no ghost blades.",
+    "no-text": "No text, letters, glyphs, writing or logos anywhere.",
+    "no-flares": "No cross flares, no starbursts, no four-point sparkles, no lens flares.",
+    "visible-motion": "The motion is clearly visible at game size: a full, readable {action} with real movement of the body, not a still image.",
+    "in-place": "The character stays in the same spot and never travels across the frame; the game moves the sprite.",
+    "fluid-motion": "One continuous, fluid motion at natural speed: no pauses, no frozen poses, no hovering, no slow motion.",
+    "steady-cycle": "A steady, evenly timed cycle: every step looks the same, the legs clearly alternate and the pose at the end of each cycle matches its start.",
+    "no-blur": "No motion-blur smears, no afterimages, no colour fringing on the weapon."
+  },
+  "gatefix": {
+    "area": [
+      "constant-size",
+      "camera-locked"
+    ],
+    "feet": [
+      "feet-planted",
+      "in-place"
+    ],
+    "identity": [
+      "identity-lock",
+      "face-visible"
+    ],
+    "zoom": [
+      "camera-locked"
+    ],
+    "turn": [
+      "never-turn"
+    ],
+    "edge": [
+      "inside-frame"
+    ],
+    "background": [
+      "flat-background"
+    ],
+    "extra": [
+      "no-extras"
+    ],
+    "motion": [
+      "visible-motion",
+      "single-action"
+    ],
+    "end-pose": [
+      "same-start-end"
+    ],
+    "colour": [
+      "keep-colours"
+    ],
+    "timing": [
+      "fluid-motion"
+    ],
+    "loop": [
+      "steady-cycle",
+      "in-place"
+    ],
+    "registration": [
+      "starts-from-still",
+      "camera-locked"
+    ],
+    "keying": [
+      "flat-background",
+      "inside-frame"
+    ]
+  },
+  "actions": [
+    {
+      "id": "idle",
+      "action": "idle",
+      "view": "side",
+      "kind": "loop",
+      "loopKind": "idle",
+      "gaitState": null,
+      "prepareAction": "idle",
+      "retimeKind": "idle",
+      "placement": {
+        "preset": "square",
+        "canvas": [
+          1024,
+          1024
+        ],
+        "scale": 1.0,
+        "root": [
+          631.5,
+          925.0
+        ],
+        "anchor": [
+          631.5,
+          925.0
+        ],
+        "subjectBox": [
+          191.0,
+          140.0,
+          832.0,
+          925.0
+        ],
+        "margin": 20,
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "headroom": 0.1367
+      },
+      "pinLastFrame": true,
+      "lock": "feet",
+      "airborne": false,
+      "hitTick": false,
+      "returnsToRest": true,
+      "motion": "stands in place in {pos} ready stance as a looping game idle animation: slow, clearly visible breathing with the chest and shoulders rising and falling, a slight bob in the knees, hair, cloth and loose parts stirring gently in a soft wind. No steps, no attack, no gestures. The feet stay planted on the same ground line and the body stays centered in the frame.",
+      "negatives": "Nothing appears around the character: no particles, no smoke, no dust, no effects.",
+      "gates": {
+        "area": {
+          "min": 0.72,
+          "max": 1.32,
+          "maxBadShare": 0.1
+        },
+        "feet": {
+          "max": 0.05,
+          "badFrames": 3,
+          "mode": "all"
+        },
+        "identity": {
+          "start": 0.8,
+          "min": 0.5,
+          "badFrames": 2,
+          "severe": 0.3,
+          "severeShare": 0.5,
+          "scales": [
+            0.9,
+            1.0,
+            1.1
+          ]
+        },
+        "colour": {
+          "foreign": 0.02,
+          "badShare": 0.15,
+          "drift": 0.03,
+          "driftShare": 0.4
+        },
+        "timing": {
+          "maxSeconds": 2.0,
+          "maxHoldSeconds": 0.5
+        },
+        "zoom": {
+          "max": 0.08
+        },
+        "turn": {
+          "enabled": true,
+          "margin": 0.08,
+          "run": 3
+        },
+        "edge": {
+          "px": 2
+        },
+        "background": {
+          "tolerance": 48.0,
+          "maxImpure": 0.004,
+          "badFrames": 2
+        },
+        "extra": {
+          "max": 0.015,
+          "badFrames": 2
+        },
+        "motion": {
+          "min": 0.006
+        },
+        "endPose": {
+          "enabled": false,
+          "min": 0.8
+        },
+        "window": {
+          "loopSeconds": 1.0
+        }
+      },
+      "prompt": "The same prehistoric caveman with wooden club (muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club), facing RIGHT the entire time and never turning around, stands in place in their ready stance as a looping game idle animation: slow, clearly visible breathing with the chest and shoulders rising and falling, a slight bob in the knees, hair, cloth and loose parts stirring gently in a soft wind. No steps, no attack, no gestures. The feet stay planted on the same ground line and the body stays centered in the frame. The clip starts AND ends in exactly the same pose as the still. Nothing appears around the character: no particles, no smoke, no dust, no effects. camera locked, no zoom, no pan; solid flat pure magenta background only for the whole shot; keep the exact HD hand-drawn 2D game-art look, palette, proportions and costume of the still; single continuous action.\n",
+      "lint": []
+    },
+    {
+      "id": "walk",
+      "action": "walk",
+      "view": "side",
+      "kind": "loop",
+      "loopKind": "gait",
+      "gaitState": "walk",
+      "prepareAction": "walk",
+      "retimeKind": "walk",
+      "placement": {
+        "preset": "square",
+        "canvas": [
+          1024,
+          1024
+        ],
+        "scale": 1.0,
+        "root": [
+          631.5,
+          925.0
+        ],
+        "anchor": [
+          631.5,
+          925.0
+        ],
+        "subjectBox": [
+          191.0,
+          140.0,
+          832.0,
+          925.0
+        ],
+        "margin": 20,
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "headroom": 0.1367
+      },
+      "pinLastFrame": false,
+      "lock": "feet",
+      "airborne": false,
+      "hitTick": false,
+      "returnsToRest": true,
+      "motion": "walks in place like a looping game walk cycle on a treadmill: clearly alternating left and right steps with heel contact, a bent-knee passing pose and toe-off, arms swinging opposite to the legs, a small natural up-and-down weight shift. The character stays in the same spot and never moves across the frame; one foot is always on the same ground line.",
+      "negatives": "Constant character size. No dust clouds, no speed lines, no effects.",
+      "gates": {
+        "area": {
+          "min": 0.72,
+          "max": 1.32,
+          "maxBadShare": 0.1
+        },
+        "feet": {
+          "max": 0.05,
+          "badFrames": 3,
+          "mode": "all"
+        },
+        "identity": {
+          "start": 0.8,
+          "min": 0.5,
+          "badFrames": 2,
+          "severe": 0.3,
+          "severeShare": 0.5,
+          "scales": [
+            0.9,
+            1.0,
+            1.1
+          ]
+        },
+        "colour": {
+          "foreign": 0.02,
+          "badShare": 0.15,
+          "drift": 0.03,
+          "driftShare": 0.4
+        },
+        "timing": {
+          "maxSeconds": 2.0,
+          "maxHoldSeconds": 0.5
+        },
+        "zoom": {
+          "max": 0.08
+        },
+        "turn": {
+          "enabled": true,
+          "margin": 0.08,
+          "run": 3
+        },
+        "edge": {
+          "px": 2
+        },
+        "background": {
+          "tolerance": 48.0,
+          "maxImpure": 0.004,
+          "badFrames": 2
+        },
+        "extra": {
+          "max": 0.015,
+          "badFrames": 2
+        },
+        "motion": {
+          "min": 0.05
+        },
+        "endPose": {
+          "enabled": false,
+          "min": 0.8
+        },
+        "window": {
+          "loopSeconds": 1.0
+        }
+      },
+      "prompt": "The same prehistoric caveman with wooden club (muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club), facing RIGHT the entire time and never turning around, walks in place like a looping game walk cycle on a treadmill: clearly alternating left and right steps with heel contact, a bent-knee passing pose and toe-off, arms swinging opposite to the legs, a small natural up-and-down weight shift. The character stays in the same spot and never moves across the frame; one foot is always on the same ground line. The clip starts AND ends in exactly the same pose as the still. Constant character size. No dust clouds, no speed lines, no effects. camera locked, no zoom, no pan; solid flat pure magenta background only for the whole shot; keep the exact HD hand-drawn 2D game-art look, palette, proportions and costume of the still; single continuous action.\n",
+      "lint": []
+    },
+    {
+      "id": "attack",
+      "action": "attack",
+      "view": "side",
+      "kind": "oneshot",
+      "loopKind": null,
+      "gaitState": null,
+      "prepareAction": "attack",
+      "retimeKind": "attack",
+      "placement": {
+        "preset": "wide",
+        "canvas": [
+          1820,
+          1024
+        ],
+        "scale": 1.0,
+        "root": [
+          800.8,
+          925.0
+        ],
+        "anchor": [
+          631.5,
+          925.0
+        ],
+        "subjectBox": [
+          360.3,
+          140.0,
+          1001.3,
+          925.0
+        ],
+        "margin": 20,
+        "padding": [
+          170,
+          0,
+          627,
+          0
+        ],
+        "headroom": 0.1367
+      },
+      "pinLastFrame": true,
+      "lock": "feet",
+      "airborne": false,
+      "hitTick": true,
+      "returnsToRest": true,
+      "motion": "starts in {pos} ready stance, draws back a little (a short wind-up), then performs ONE fast, powerful attack {toward} with {pos} weapon or fists at chest height, holds the strike for a brief moment, then returns to the exact same ready stance as the start and holds still. Only one attack: no second strike, no spinning, no jumping, no leaving the frame. The back foot stays planted.",
+      "negatives": "The weapon stays one single weapon of the same length and shape. Constant character size. No motion trails, no slash effects, no sparks, no effects.",
+      "gates": {
+        "area": {
+          "min": 0.72,
+          "max": 1.32,
+          "maxBadShare": 0.1
+        },
+        "feet": {
+          "max": 0.05,
+          "badFrames": 3,
+          "mode": "all"
+        },
+        "identity": {
+          "start": 0.8,
+          "min": 0.5,
+          "badFrames": 2,
+          "severe": 0.3,
+          "severeShare": 0.5,
+          "scales": [
+            0.9,
+            1.0,
+            1.1
+          ]
+        },
+        "colour": {
+          "foreign": 0.02,
+          "badShare": 0.15,
+          "drift": 0.03,
+          "driftShare": 0.4
+        },
+        "timing": {
+          "maxSeconds": 2.0,
+          "maxHoldSeconds": 0.5
+        },
+        "zoom": {
+          "max": 0.08
+        },
+        "turn": {
+          "enabled": true,
+          "margin": 0.08,
+          "run": 3
+        },
+        "edge": {
+          "px": 2
+        },
+        "background": {
+          "tolerance": 48.0,
+          "maxImpure": 0.004,
+          "badFrames": 2
+        },
+        "extra": {
+          "max": 0.015,
+          "badFrames": 2
+        },
+        "motion": {
+          "min": 0.03
+        },
+        "endPose": {
+          "enabled": true,
+          "min": 0.8
+        },
+        "window": {
+          "loopSeconds": 1.0
+        }
+      },
+      "timing": {
+        "mode": "auto",
+        "durationMs": 700,
+        "keys": {
+          "hit": {
+            "at": 0.4,
+            "holdMs": 80
+          }
+        }
+      },
+      "prompt": "The same prehistoric caveman with wooden club (muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club), facing RIGHT the entire time and never turning around, starts in their ready stance, draws back a little (a short wind-up), then performs ONE fast, powerful attack to the RIGHT with their weapon or fists at chest height, holds the strike for a brief moment, then returns to the exact same ready stance as the start and holds still. Only one attack: no second strike, no spinning, no jumping, no leaving the frame. The back foot stays planted. The clip starts AND ends in exactly the same pose as the still. The weapon stays one single weapon of the same length and shape. Constant character size. No motion trails, no slash effects, no sparks, no effects. camera locked, no zoom, no pan; solid flat pure magenta background only for the whole shot; keep the exact HD hand-drawn 2D game-art look, palette, proportions and costume of the still; single continuous action.\n",
+      "lint": []
+    },
+    {
+      "id": "hurt",
+      "action": "hurt",
+      "view": "side",
+      "kind": "oneshot",
+      "loopKind": null,
+      "gaitState": null,
+      "prepareAction": "hurt",
+      "retimeKind": "hurt",
+      "placement": {
+        "preset": "square",
+        "canvas": [
+          1024,
+          1024
+        ],
+        "scale": 1.0,
+        "root": [
+          631.5,
+          925.0
+        ],
+        "anchor": [
+          631.5,
+          925.0
+        ],
+        "subjectBox": [
+          191.0,
+          140.0,
+          832.0,
+          925.0
+        ],
+        "margin": 20,
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "headroom": 0.1367
+      },
+      "pinLastFrame": false,
+      "lock": "feet",
+      "airborne": false,
+      "hitTick": false,
+      "returnsToRest": true,
+      "motion": "holds {pos} ready stance for a brief moment, then is knocked back a little by an unseen blow from the front: the whole body jolts backward {away} by a few pixels, the head tilts back and the shoulders jerk up for a split second, then the character sinks back into the exact same stance and holds still. A small, quick recoil, under one second; the feet stay planted and the character keeps facing {facing}.",
+      "negatives": "No projectiles, no flashes, no sparks, no blood, no effects.",
+      "gates": {
+        "area": {
+          "min": 0.72,
+          "max": 1.32,
+          "maxBadShare": 0.1
+        },
+        "feet": {
+          "max": 0.05,
+          "badFrames": 3,
+          "mode": "all"
+        },
+        "identity": {
+          "start": 0.8,
+          "min": 0.5,
+          "badFrames": 2,
+          "severe": 0.3,
+          "severeShare": 0.5,
+          "scales": [
+            0.9,
+            1.0,
+            1.1
+          ]
+        },
+        "colour": {
+          "foreign": 0.02,
+          "badShare": 0.15,
+          "drift": 0.03,
+          "driftShare": 0.4
+        },
+        "timing": {
+          "maxSeconds": 2.0,
+          "maxHoldSeconds": 0.5
+        },
+        "zoom": {
+          "max": 0.08
+        },
+        "turn": {
+          "enabled": true,
+          "margin": 0.08,
+          "run": 3
+        },
+        "edge": {
+          "px": 2
+        },
+        "background": {
+          "tolerance": 48.0,
+          "maxImpure": 0.004,
+          "badFrames": 2
+        },
+        "extra": {
+          "max": 0.015,
+          "badFrames": 2
+        },
+        "motion": {
+          "min": 0.02
+        },
+        "endPose": {
+          "enabled": true,
+          "min": 0.8
+        },
+        "window": {
+          "loopSeconds": 1.0
+        }
+      },
+      "timing": {
+        "mode": "auto",
+        "durationMs": 500,
+        "keys": {
+          "peak": {
+            "at": 0.3,
+            "holdMs": 80
+          }
+        }
+      },
+      "prompt": "The same prehistoric caveman with wooden club (muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club), facing RIGHT the entire time and never turning around, holds their ready stance for a brief moment, then is knocked back a little by an unseen blow from the front: the whole body jolts backward to the LEFT by a few pixels, the head tilts back and the shoulders jerk up for a split second, then the character sinks back into the exact same stance and holds still. A small, quick recoil, under one second; the feet stay planted and the character keeps facing RIGHT. The clip starts AND ends in exactly the same pose as the still. No projectiles, no flashes, no sparks, no blood, no effects. camera locked, no zoom, no pan; solid flat pure magenta background only for the whole shot; keep the exact HD hand-drawn 2D game-art look, palette, proportions and costume of the still; single continuous action.\n",
+      "lint": []
+    }
+  ],
+  "estimate": {
+    "clips": 4,
+    "maxClips": 12,
+    "maxVideoSeconds": 72.0,
+    "note": "route_media.py prints and ledgers the real price of every clip"
+  }
+}

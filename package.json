@@ -1,0 +1,30 @@
+{
+  "name": "buddhalive-studio",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "dev": "corepack pnpm --filter @singularity/game dev",
+    "sim": "corepack pnpm --filter @singularity/game sim",
+    "build": "corepack pnpm --filter @buddhalive/shared build && corepack pnpm --filter @buddhalive/backend build && corepack pnpm --filter @buddhalive/overlay build && corepack pnpm --filter @buddhalive/desktop build && corepack pnpm --filter @singularity/game build",
+    "typecheck": "corepack pnpm --filter @buddhalive/shared build && corepack pnpm --filter @buddhalive/backend build && corepack pnpm -r typecheck",
+    "pack:win-dir": "corepack pnpm build && corepack pnpm --filter @buddhalive/desktop pack:dir",
+    "pack:win-installer": "corepack pnpm build && corepack pnpm --filter @buddhalive/desktop pack:installer",
+    "test:unit": "vitest run packages apps",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "verify:s1": "corepack pnpm typecheck && corepack pnpm pack:win-dir && corepack pnpm test",
+    "verify:s2": "corepack pnpm typecheck && corepack pnpm pack:win-dir && corepack pnpm test && corepack pnpm test:e2e",
+    "verify:s3": "corepack pnpm typecheck && corepack pnpm pack:win-dir && corepack pnpm test && corepack pnpm test:e2e",
+    "verify:s4": "corepack pnpm typecheck && corepack pnpm pack:win-dir && corepack pnpm test && corepack pnpm test:e2e",
+    "verify:s5": "corepack pnpm typecheck && corepack pnpm pack:win-dir && corepack pnpm test && corepack pnpm test:e2e",
+    "verify:s6": "corepack pnpm typecheck && corepack pnpm pack:win-dir && corepack pnpm test && corepack pnpm test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "22.20.5",
+    "socket.io-client": "4.8.4",
+    "typescript": "5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

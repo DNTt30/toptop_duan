@@ -1,0 +1,3 @@
+/* BuddhaLive Design System entry (S10-T01). Import file này một lần ở main.tsx của mỗi app. */
+@import './buddhalive-tokens.css';
+@import './buddhalive-components.css';

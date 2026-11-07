@@ -1,0 +1,75 @@
+{
+  "name": "@buddhalive/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BuddhaLive Studio Desktop Manager for Windows 11",
+  "author": "BuddhaLive Studio Team",
+  "main": "./dist-electron/main.cjs",
+  "scripts": {
+    "build:renderer": "vite build",
+    "build:electron": "node scripts/build-electron.mjs",
+    "build": "corepack pnpm typecheck && corepack pnpm build:renderer && corepack pnpm build:electron",
+    "typecheck": "tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "start": "electron .",
+    "pack:dir": "electron-builder --win --dir",
+    "pack:installer": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3"
+  },
+  "devDependencies": {
+    "@buddhalive/backend": "workspace:*",
+    "@buddhalive/shared": "workspace:*",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "45.2.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.25.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "socket.io-client": "4.8.4",
+    "vite": "^8.3.5"
+  },
+  "build": {
+    "appId": "com.buddhalive.studio",
+    "productName": "BuddhaLive Studio",
+    "electronVersion": "45.2.1",
+    "npmRebuild": false,
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**",
+      "**/node_modules/node-addon-api/**"
+    ],
+    "files": [
+      "dist-electron/**/*",
+      "dist-renderer/**/*",
+      "dist-overlay/**/*",
+      "bundled-assets/**/*",
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/node-addon-api/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "dir"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BuddhaLive Studio",
+      "uninstallDisplayName": "BuddhaLive Studio",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema": "generate2dsprite.master_spec.v1",
+  "name": "caveman",
+  "subject": "prehistoric caveman with wooden club",
+  "identity": "muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club",
+  "pose": null,
+  "recap": "prehistoric caveman with wooden club (muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club)",
+  "facing": "right",
+  "facing_parts": null,
+  "view": null,
+  "class": "hero",
+  "finish": "hd",
+  "key": "#FF00FF",
+  "genre": null,
+  "pronoun": "they",
+  "identity_ref": null,
+  "style_ref": null,
+  "allowed_text": null,
+  "extra_bans": [],
+  "opaque_parts": null,
+  "extra": null
+}

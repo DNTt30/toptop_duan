@@ -1,0 +1,78 @@
+{
+  "version": "3.0",
+  "name": "hacker",
+  "unitId": "ai_neural_hacker",
+  "format": "FORGE_3_0",
+  "meta": {
+    "app": "agent-sprite-forge",
+    "version": "3.0",
+    "image": "/sprites/ai/hacker_atlas.png",
+    "size": {
+      "w": 1536,
+      "h": 1024
+    }
+  },
+  "fallback": {
+    "cellSize": [
+      256,
+      256
+    ]
+  },
+  "frameCount": 24,
+  "anchor": {
+    "x": 0.5,
+    "y": 0.9
+  },
+  "hitbox": {
+    "x": -35,
+    "y": -190,
+    "width": 70,
+    "height": 190
+  },
+  "clips": {
+    "idle": {
+      "name": "idle",
+      "startFrame": 0,
+      "frameCount": 4,
+      "fps": 8,
+      "loop": true
+    },
+    "walk": {
+      "name": "walk",
+      "startFrame": 6,
+      "frameCount": 4,
+      "fps": 10,
+      "loop": true,
+      "stridePx": 64
+    },
+    "attack": {
+      "name": "attack",
+      "startFrame": 12,
+      "frameCount": 4,
+      "fps": 12,
+      "loop": false,
+      "hitFrame": 1,
+      "events": [
+        {
+          "name": "hit",
+          "frame": 1,
+          "atMs": 83
+        }
+      ]
+    },
+    "hurt": {
+      "name": "hurt",
+      "startFrame": 18,
+      "frameCount": 2,
+      "fps": 8,
+      "loop": false
+    },
+    "die": {
+      "name": "die",
+      "startFrame": 20,
+      "frameCount": 2,
+      "fps": 8,
+      "loop": false
+    }
+  }
+}

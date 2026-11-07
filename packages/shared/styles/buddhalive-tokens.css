@@ -1,0 +1,200 @@
+/* ==========================================================================
+ * BuddhaLive Design System — "Thanh Tịnh & Trang Nghiêm"
+ * Milestone S10-T01: Design Tokens & Styling Foundation
+ *
+ * Nguồn token DUY NHẤT dùng chung cho Desktop Manager và Overlay.
+ * - Chỉ là CSS thuần (không runtime, không dependency, không đụng logic S9).
+ * - Desktop Manager: <body data-bl-theme="manager">  (Dark, rõ ràng để vận hành)
+ * - Overlay:         <body data-bl-theme="sacred">   (Điện Phật, ấm, trang nghiêm)
+ * - Font: chỉ dùng font hệ thống (CSP desktop chặn font ngoài, chạy offline).
+ *
+ * Breakpoints tham chiếu (CSS var không dùng được trong @media, ghi lại để
+ * các task sau dùng thống nhất):
+ *   --bl-bp-sm: 1280px   (1280×720)
+ *   --bl-bp-md: 1366px   (1366×768)
+ *   --bl-bp-lg: 1600px   (1600×900)
+ *   --bl-bp-xl: 1920px   (1920×1080)
+ *   Portrait 9:16: @media (max-aspect-ratio: 3/4)
+ * ========================================================================== */
+
+:root {
+  /* ---------- 1. Primitive palette ---------- */
+  --bl-slate-950: #090d16;
+  --bl-slate-900: #0f172a;
+  --bl-slate-850: #151e31;
+  --bl-slate-800: #1e293b;
+  --bl-slate-700: #334155;
+  --bl-slate-500: #64748b;
+  --bl-slate-400: #94a3b8;
+  --bl-slate-200: #e2e8f0;
+  --bl-slate-50: #f8fafc;
+
+  --bl-gold-600: #d97706;
+  --bl-gold-500: #f59e0b;
+  --bl-gold-400: #fbbf24;
+  --bl-gold-200: #fde68a;
+  --bl-gold-100: #fef3c7;
+
+  --bl-lotus-600: #db2777;
+  --bl-lotus-500: #ec4899;
+  --bl-lotus-300: #f9a8d4;
+
+  --bl-crimson-800: #6b1d2a;
+  --bl-crimson-700: #881337;
+
+  --bl-wood-900: #2a1a10;
+  --bl-wood-800: #3b2414;
+
+  --bl-jade-500: #10b981;
+  --bl-jade-300: #6ee7b7;
+  --bl-amber-500: #f59e0b;
+  --bl-amber-300: #fcd34d;
+  --bl-red-500: #ef4444;
+  --bl-red-300: #fca5a5;
+  --bl-blue-500: #3b82f6;
+  --bl-blue-300: #93c5fd;
+
+  /* ---------- 2. Status (dùng chung cả 2 theme) ---------- */
+  --bl-status-ok: var(--bl-jade-500);
+  --bl-status-ok-fg: var(--bl-jade-300);
+  --bl-status-ok-bg: rgba(16, 185, 129, 0.14);
+  --bl-status-warn: var(--bl-amber-500);
+  --bl-status-warn-fg: var(--bl-amber-300);
+  --bl-status-warn-bg: rgba(245, 158, 11, 0.14);
+  --bl-status-error: var(--bl-red-500);
+  --bl-status-error-fg: var(--bl-red-300);
+  --bl-status-error-bg: rgba(239, 68, 68, 0.14);
+  --bl-status-info: var(--bl-blue-500);
+  --bl-status-info-fg: var(--bl-blue-300);
+  --bl-status-info-bg: rgba(59, 130, 246, 0.14);
+  --bl-status-idle: var(--bl-slate-500);
+  --bl-status-idle-fg: var(--bl-slate-400);
+  --bl-status-idle-bg: rgba(100, 116, 139, 0.16);
+
+  /* ---------- 3. Typography ---------- */
+  --bl-font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --bl-font-display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --bl-font-mono: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+
+  --bl-text-xs: 11px;   /* caption, badge */
+  --bl-text-sm: 12px;   /* meta, label phụ */
+  --bl-text-md: 13px;   /* body mặc định của Manager */
+  --bl-text-base: 14px; /* body nhấn */
+  --bl-text-lg: 16px;   /* card title */
+  --bl-text-xl: 20px;   /* section heading */
+  --bl-text-2xl: 24px;  /* page heading */
+  --bl-text-3xl: 30px;  /* overlay banner */
+
+  --bl-weight-regular: 400;
+  --bl-weight-medium: 500;
+  --bl-weight-semibold: 600;
+  --bl-weight-bold: 700;
+
+  --bl-leading-tight: 1.25;
+  --bl-leading-normal: 1.5;
+
+  /* ---------- 4. Spacing (lưới 4px) ---------- */
+  --bl-space-0: 0;
+  --bl-space-1: 4px;
+  --bl-space-2: 8px;
+  --bl-space-3: 12px;
+  --bl-space-4: 16px;
+  --bl-space-5: 20px;
+  --bl-space-6: 24px;
+  --bl-space-8: 32px;
+  --bl-space-10: 40px;
+  --bl-space-12: 48px;
+
+  /* ---------- 5. Radius ---------- */
+  --bl-radius-sm: 6px;
+  --bl-radius-md: 10px;
+  --bl-radius-lg: 16px;
+  --bl-radius-full: 9999px;
+
+  /* ---------- 6. Shadows ---------- */
+  --bl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --bl-shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --bl-shadow-pop: 0 12px 32px -8px rgba(0, 0, 0, 0.55);
+  --bl-shadow-sacred-glow: 0 0 20px rgba(245, 158, 11, 0.25);
+
+  /* ---------- 7. Motion ---------- */
+  --bl-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --bl-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --bl-dur-fast: 120ms;
+  --bl-dur-base: 200ms;
+  --bl-dur-slow: 400ms;
+
+  /* ---------- 8. Layering ---------- */
+  --bl-z-base: 0;
+  --bl-z-stage-label: 10;
+  --bl-z-hud: 20;
+  --bl-z-toast: 30;
+  --bl-z-modal: 50;
+
+  /* ---------- 9. Layout ---------- */
+  --bl-sidebar-width: 240px;
+  --bl-sidebar-width-collapsed: 64px;
+  --bl-header-height: 56px;
+  --bl-control-height-sm: 28px;
+  --bl-control-height-md: 36px;
+}
+
+/* ==========================================================================
+ * Semantic theme: Desktop Manager (Dark, vận hành)
+ * ========================================================================== */
+[data-bl-theme='manager'] {
+  --bl-bg-app: var(--bl-slate-950);
+  --bl-bg-surface: var(--bl-slate-900);
+  --bl-bg-surface-raised: var(--bl-slate-850);
+  --bl-bg-surface-sunken: #0b1120;
+  --bl-bg-hover: rgba(148, 163, 184, 0.08);
+  --bl-bg-active: rgba(245, 158, 11, 0.12);
+
+  --bl-border-subtle: rgba(148, 163, 184, 0.12);
+  --bl-border-default: var(--bl-slate-700);
+  --bl-border-strong: var(--bl-slate-500);
+
+  --bl-fg-primary: var(--bl-slate-50);
+  --bl-fg-secondary: var(--bl-slate-400);
+  --bl-fg-muted: var(--bl-slate-500);
+  --bl-fg-on-accent: #1a1204;
+
+  --bl-accent: var(--bl-gold-400);
+  --bl-accent-strong: var(--bl-gold-500);
+  --bl-accent-fg: var(--bl-gold-200);
+  --bl-accent-soft: rgba(251, 191, 36, 0.12);
+
+  --bl-focus-ring: 0 0 0 2px var(--bl-slate-950), 0 0 0 4px var(--bl-gold-400);
+}
+
+/* ==========================================================================
+ * Semantic theme: Overlay (Điện Phật — giữ nhận diện hiện tại)
+ * ========================================================================== */
+[data-bl-theme='sacred'] {
+  --bl-bg-app: transparent;
+  --bl-bg-surface: rgba(20, 12, 6, 0.72);
+  --bl-bg-surface-raised: rgba(42, 26, 16, 0.82);
+  --bl-bg-surface-sunken: rgba(9, 6, 3, 0.6);
+  --bl-bg-hover: rgba(251, 191, 36, 0.1);
+  --bl-bg-active: rgba(251, 191, 36, 0.18);
+
+  --bl-border-subtle: rgba(251, 191, 36, 0.18);
+  --bl-border-default: rgba(251, 191, 36, 0.4);
+  --bl-border-strong: var(--bl-gold-400);
+
+  --bl-fg-primary: var(--bl-gold-100);
+  --bl-fg-secondary: rgba(254, 243, 199, 0.78);
+  --bl-fg-muted: rgba(254, 243, 199, 0.55);
+  --bl-fg-on-accent: #2a1a10;
+
+  --bl-accent: var(--bl-gold-400);
+  --bl-accent-strong: var(--bl-gold-500);
+  --bl-accent-fg: var(--bl-gold-200);
+  --bl-accent-soft: rgba(251, 191, 36, 0.16);
+  --bl-accent-lotus: var(--bl-lotus-500);
+
+  /* Nhãn tên Phật tử & chữ trên nền ảnh: cần text-shadow để đọc được */
+  --bl-text-shadow-stage: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 8px rgba(0, 0, 0, 0.5);
+
+  --bl-focus-ring: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 0 0 4px var(--bl-gold-400);
+}

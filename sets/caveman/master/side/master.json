@@ -1,0 +1,172 @@
+{
+  "schema": "generate2dsprite.master.v1",
+  "tool": {
+    "name": "master_still",
+    "version": "0.4.0"
+  },
+  "created": "2026-11-07T03:10:12.873Z",
+  "name": "caveman",
+  "subject": "prehistoric caveman with wooden club",
+  "identity_recap": "prehistoric caveman with wooden club (muscular prehistoric hunter-gatherer caveman with brown hair, beard, fur loincloth, leather wristbands and ankle bands, holding a large wooden spiked club)",
+  "facing": "right",
+  "view": "side view (profile to three-quarter)",
+  "finish": "hd",
+  "class": "hero",
+  "framing": {
+    "canvas": [
+      1024,
+      1024
+    ],
+    "subject_height_px": 788,
+    "top_margin_px": 138,
+    "lead_px": 0,
+    "preset": "hero",
+    "subject_bbox": [
+      191,
+      138,
+      833,
+      927
+    ],
+    "anchor": [
+      632.0,
+      927.0
+    ],
+    "opaque_area_px": 274225,
+    "width_limited": false
+  },
+  "key": "#FF00FF",
+  "files": {
+    "master": {
+      "path": "master.png",
+      "sha256": "b1c4423af9adb62c41c20db148234391de0c1ccc83a932f756b6763862d38a41",
+      "bytes": 353798,
+      "size": [
+        1024,
+        1024
+      ]
+    },
+    "cutout": {
+      "path": "master_rgba.png",
+      "sha256": "bd7584a5748fe0bc8360f4703aa4b9d790908d3b95e4cf96cf95b7bcb8d78943",
+      "bytes": 429520,
+      "size": [
+        1024,
+        1024
+      ]
+    },
+    "source": {
+      "path": "source.png",
+      "sha256": "97e6a7d22dfd4343d2079bf1401d852dde37216587d40a33e9e0132004a1ee5b",
+      "bytes": 41114,
+      "size": [
+        256,
+        256
+      ]
+    },
+    "spec": {
+      "path": "spec.json",
+      "sha256": "54a5febb5a39f535883653fdc130ce684a4ee73ef699d58738aa1340b76bcc3c",
+      "bytes": 806
+    },
+    "prompt": null
+  },
+  "references": [],
+  "transform": {
+    "mapping": "master = scale * source + offset (continuous pixel coordinates: pixel i spans [i, i + 1))",
+    "source_size": [
+      256,
+      256
+    ],
+    "source_subject_bbox": [
+      58,
+      56,
+      199,
+      230
+    ],
+    "crop_box": [
+      52,
+      50,
+      205,
+      236
+    ],
+    "crop_margin_px": 6,
+    "scale": 4.528735632183908,
+    "offset": [
+      -69.94252873563221,
+      -115.60919540229884
+    ],
+    "canvas": [
+      1024,
+      1024
+    ],
+    "resampler": "lanczos",
+    "premultiplied": true,
+    "alpha_floor_px": 12030,
+    "subject_parts": 1,
+    "ignored_parts": 0,
+    "ignored_px": 0,
+    "source_touches": [],
+    "key_rgb": [
+      255,
+      0,
+      255
+    ]
+  },
+  "route": "external",
+  "provenance": {
+    "command": "external",
+    "run": null,
+    "take": null,
+    "source_name": "caveman_base.png",
+    "source_sha256": "97e6a7d22dfd4343d2079bf1401d852dde37216587d40a33e9e0132004a1ee5b",
+    "media": null,
+    "media_cli_source": null,
+    "edit": null
+  },
+  "matte": {
+    "requested": "soft",
+    "key_estimate": {
+      "key": [
+        255.0,
+        0.0,
+        255.0
+      ],
+      "source": "native_alpha",
+      "valid": false,
+      "ring_share": 0.0,
+      "coverage": 0.0,
+      "distance_from_declared": 0.0
+    },
+    "quality": "native_alpha",
+    "qa": {
+      "key": [
+        255.0,
+        0.0,
+        255.0
+      ],
+      "opaque_key_px": 0,
+      "outer_ring_spill_fraction": 0.0,
+      "semitransparent_fraction": 0.12202710176991151,
+      "enclosed_key_pockets": 0,
+      "key_hued_px": 0,
+      "visible_px": 14464,
+      "outer_ring_px": 777,
+      "thresholds": {
+        "key_tolerance": 48.0,
+        "spill_threshold": 20.0,
+        "min_pocket_area": 16,
+        "opaque_alpha": 128,
+        "spill_hue_balance": 0.5
+      },
+      "method": "forge_matte.matte_qa v1: straight-colour key distance and dominance on the keyed image; two-channel keys count spill only where the key channels are balanced"
+    },
+    "key_choice": {
+      "status": "ok",
+      "overlap_share": 0.0,
+      "rule": "reject a key when more than 0.5% of subject pixels have key dominance >= 40; first acceptable candidate wins"
+    }
+  },
+  "warnings": [
+    "the subject is upscaled x4.53 (174 px source height): detail will be soft; ask the route for a larger figure"
+  ]
+}
