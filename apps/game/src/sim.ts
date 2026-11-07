@@ -6,6 +6,12 @@
  * - BALANCED: Cân bằng giữa mua lính và mua nâng cấp khi có thặng dư vàng.
  *
  * Đọc cấu hình luật trận đấu trực tiếp từ `data/modes.ts` (không hardcode hằng số riêng).
+ * Định nghĩa tiền tuyến chuẩn:
+ * - Trung bình vị trí quân tiên phong (đầu hàng) của hai phe.
+ * - Khi một phe không còn quân sống: ghi null thay cho giá trị mặc định.
+ * - Đo biên độ thật (max - min) trong cửa sổ 60s cuối và % thời gian mỗi phe có 0 quân.
+ * - Kiểm tra độ lệch/nghiêng sân so với tâm sân (1.100 px).
+ *
  * Hỗ trợ tham số dòng lệnh CLI:
  *   --maxSeconds=<sec> (mặc định 900)
  *   --profile=<solo|live> (mặc định solo)
@@ -15,6 +21,12 @@
 import { BotAI, type BotDifficulty, type BotStrategy } from './engine/BotAI';
 import { World, type MatchEndReason } from './engine/World';
 import { getModeMatchConfig, type GameMode } from './data/modes';
+import { LANE_WIDTH } from './data/ages';
+
+export interface FrontlineSample {
+  time: number;
+  frontlineX: number | null;
+}
 
 export interface MatchMetrics {
   matchIndex: number;
@@ -32,6 +44,11 @@ export interface MatchMetrics {
   rightUpgrades: number;
   leftStrategy: BotStrategy;
   rightStrategy: BotStrategy;
+  // Số liệu tiền tuyến & kiểm soát quân
+  zeroUnitsLeftPct: number;
+  zeroUnitsRightPct: number;
+  last60sAmplitude: number | null;
+  avgFrontlineBothAlive: number | null;
 }
 
 export interface SimOptions {
@@ -91,6 +108,13 @@ export function runSingleMatch(
   const dt = 1 / 60; // 60 ticks/s
   const maxTicks = Math.round(options.maxSeconds * 60);
 
+  let zeroTicksLeft = 0;
+  let zeroTicksRight = 0;
+  const frontlineSamples: FrontlineSample[] = [];
+
+  // Lấy mẫu tiền tuyến mỗi giây 1 lần (60 ticks)
+  const sampleIntervalTicks = 60;
+
   for (let tick = 0; tick < maxTicks; tick++) {
     leftAI.update(
       dt,
@@ -106,9 +130,46 @@ export function runSingleMatch(
 
     world.update(dt);
 
+    const leftAliveCount = world.playerUnits.filter((u) => u.isAlive).length;
+    const rightAliveCount = world.botUnits.filter((u) => u.isAlive).length;
+
+    if (leftAliveCount === 0) zeroTicksLeft++;
+    if (rightAliveCount === 0) zeroTicksRight++;
+
+    if (tick % sampleIntervalTicks === 0) {
+      frontlineSamples.push({
+        time: Math.round(world.matchTime),
+        frontlineX: world.combatFrontlineX,
+      });
+    }
+
     if (world.status !== 'PLAYING') {
       const winner: 'LEFT' | 'RIGHT' | 'DRAW' =
         world.status === 'VICTORY' ? 'LEFT' : world.status === 'DEFEAT' ? 'RIGHT' : 'DRAW';
+
+      const totalTicksRan = Math.max(1, tick + 1);
+      const zeroUnitsLeftPct = Number(((zeroTicksLeft / totalTicksRan) * 100).toFixed(1));
+      const zeroUnitsRightPct = Number(((zeroTicksRight / totalTicksRan) * 100).toFixed(1));
+
+      // Tính biên độ thật trong 60 giây cuối
+      const finalTime = world.matchTime;
+      const last60sSamples = frontlineSamples.filter(
+        (s) => s.time >= finalTime - 60 && s.frontlineX !== null
+      );
+      let last60sAmplitude: number | null = null;
+      if (last60sSamples.length >= 2) {
+        const xs = last60sSamples.map((s) => s.frontlineX!);
+        last60sAmplitude = Math.round(Math.max(...xs) - Math.min(...xs));
+      }
+
+      // Vị trí tiền tuyến trung bình khi cả hai phe có quân
+      const bothAliveSamples = frontlineSamples.filter((s) => s.frontlineX !== null);
+      let avgFrontlineBothAlive: number | null = null;
+      if (bothAliveSamples.length > 0) {
+        const sum = bothAliveSamples.reduce((acc, s) => acc + s.frontlineX!, 0);
+        avgFrontlineBothAlive = Number((sum / bothAliveSamples.length).toFixed(1));
+      }
+
       return {
         matchIndex,
         winner,
@@ -125,12 +186,37 @@ export function runSingleMatch(
         rightUpgrades: world.botUpgrades.totalUpgradesPurchased,
         leftStrategy,
         rightStrategy,
+        zeroUnitsLeftPct,
+        zeroUnitsRightPct,
+        last60sAmplitude,
+        avgFrontlineBothAlive,
       };
     }
   }
 
   // Khi hết trần maxSeconds: KHÔNG tự phân thắng thua theo máu/cấp/XP.
   // Ghi nhận endReason = UNFINISHED và kết quả là DRAW.
+  const totalTicksRan = maxTicks;
+  const zeroUnitsLeftPct = Number(((zeroTicksLeft / totalTicksRan) * 100).toFixed(1));
+  const zeroUnitsRightPct = Number(((zeroTicksRight / totalTicksRan) * 100).toFixed(1));
+
+  const finalTime = world.matchTime;
+  const last60sSamples = frontlineSamples.filter(
+    (s) => s.time >= finalTime - 60 && s.frontlineX !== null
+  );
+  let last60sAmplitude: number | null = null;
+  if (last60sSamples.length >= 2) {
+    const xs = last60sSamples.map((s) => s.frontlineX!);
+    last60sAmplitude = Math.round(Math.max(...xs) - Math.min(...xs));
+  }
+
+  const bothAliveSamples = frontlineSamples.filter((s) => s.frontlineX !== null);
+  let avgFrontlineBothAlive: number | null = null;
+  if (bothAliveSamples.length > 0) {
+    const sum = bothAliveSamples.reduce((acc, s) => acc + s.frontlineX!, 0);
+    avgFrontlineBothAlive = Number((sum / bothAliveSamples.length).toFixed(1));
+  }
+
   return {
     matchIndex,
     winner: 'DRAW',
@@ -147,6 +233,10 @@ export function runSingleMatch(
     rightUpgrades: world.botUpgrades.totalUpgradesPurchased,
     leftStrategy,
     rightStrategy,
+    zeroUnitsLeftPct,
+    zeroUnitsRightPct,
+    last60sAmplitude,
+    avgFrontlineBothAlive,
   };
 }
 
@@ -252,7 +342,6 @@ export function runSimulationSuite(customOptions?: Partial<SimOptions>): MatchMe
     BALANCED: { matchesDecided: 0, wins: 0, losses: 0, totalUpgrades: 0, totalGoldEarned: 0, totalGoldSpent: 0 },
   };
 
-  // Tính số liệu cho toàn bộ các trận để đo Gold & Upgrades
   for (const m of allMatches) {
     stratStats[m.leftStrategy].totalUpgrades += m.leftUpgrades;
     stratStats[m.leftStrategy].totalGoldEarned += m.leftGoldEarned;
@@ -263,7 +352,6 @@ export function runSimulationSuite(customOptions?: Partial<SimOptions>): MatchMe
     stratStats[m.rightStrategy].totalGoldSpent += m.rightGoldSpent;
   }
 
-  // Chỉ tính Win/Loss trên tập BASE_DESTROYED
   for (const m of baseDestroyedMatches) {
     stratStats[m.leftStrategy].matchesDecided++;
     stratStats[m.rightStrategy].matchesDecided++;
@@ -276,6 +364,22 @@ export function runSimulationSuite(customOptions?: Partial<SimOptions>): MatchMe
       stratStats[m.leftStrategy].losses++;
     }
   }
+
+  // 4. Thống kê tiền tuyến & kiểm soát quân
+  const avgZeroUnitsLeft = (allMatches.reduce((acc, m) => acc + m.zeroUnitsLeftPct, 0) / options.totalMatches).toFixed(1);
+  const avgZeroUnitsRight = (allMatches.reduce((acc, m) => acc + m.zeroUnitsRightPct, 0) / options.totalMatches).toFixed(1);
+
+  const validAmplitudes = allMatches.map((m) => m.last60sAmplitude).filter((a): a is number => a !== null);
+  const avgAmplitude60s = validAmplitudes.length > 0
+    ? (validAmplitudes.reduce((acc, a) => acc + a, 0) / validAmplitudes.length).toFixed(1)
+    : '0.0';
+
+  const centerX = LANE_WIDTH / 2;
+  const validAvgFrontlines = allMatches.map((m) => m.avgFrontlineBothAlive).filter((f): f is number => f !== null);
+  const overallAvgFrontline = validAvgFrontlines.length > 0
+    ? (validAvgFrontlines.reduce((acc, f) => acc + f, 0) / validAvgFrontlines.length).toFixed(1)
+    : String(centerX);
+  const biasFromCenter = (Number(overallAvgFrontline) - centerX).toFixed(1);
 
   console.log(`\n======================================================================`);
   console.log(`📊 KẾT QUẢ ĐO ĐẠC HỆ THỐNG SAU ${options.totalMatches} TRẬN ĐẤU`);
@@ -293,6 +397,18 @@ export function runSimulationSuite(customOptions?: Partial<SimOptions>): MatchMe
   console.log(`- DRAW (Hòa kết thúc):            ${((reasonCounts.DRAW / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.DRAW}/${options.totalMatches} trận)`);
   console.log(`- UNFINISHED (Chưa xong tại ${options.maxSeconds}s): ${((reasonCounts.UNFINISHED / options.totalMatches) * 100).toFixed(1)}% (${reasonCounts.UNFINISHED}/${options.totalMatches} trận) [BÁO RIÊNG - LOẠI KHỎI WINRATE]`);
   console.log(`- Tổng % Ván Hòa (Tất cả lý do):   ${((drawsCount / options.totalMatches) * 100).toFixed(1)}% (${drawsCount}/${options.totalMatches} trận)\n`);
+
+  console.log(`📍 SỐ ĐO TIỀN TUYẾN & TỶ LỆ TRỐNG SÂN (FRONTLINE METRICS):`);
+  console.log(`- % Thời gian Phe Xanh (P1) có 0 quân sống: ${avgZeroUnitsLeft}%`);
+  console.log(`- % Thời gian Phe Đỏ  (P2) có 0 quân sống: ${avgZeroUnitsRight}%`);
+  console.log(`- Biên độ dao động thật trong 60s cuối (max - min): ${avgAmplitude60s} px (trên tổng chiều dài ${LANE_WIDTH} px)`);
+  console.log(`- Tiền tuyến TB khi hai phe cùng có quân: ${overallAvgFrontline} px (Tâm sân: ${centerX} px | Độ lệch: ${Number(biasFromCenter) > 0 ? '+' : ''}${biasFromCenter} px)`);
+  if (Math.abs(Number(biasFromCenter)) <= 45) {
+    console.log(`=> ĐÁNH GIÁ SÂN ĐẤU: HOÀN TOÀN CÂN BẰNG ĐỐI XỨNG (Lệch tâm chỉ ${Math.abs(Number(biasFromCenter))} px, < 1% chiều dài sân).`);
+  } else {
+    console.log(`=> ĐÁNH GIÁ SÂN ĐẤU: CÓ ĐỘ LỆCH ${biasFromCenter} px về phía ${Number(biasFromCenter) > 0 ? 'P2 (P1 lấn sân hơn)' : 'P1 (P2 lấn sân hơn)'}.`);
+  }
+  console.log('');
 
   console.log(`📈 HIỆU QUẢ CHIẾN THUẬT (CHỈ TÍNH TRÊN ${baseDestroyedMatches.length} VÁN BASE_DESTROYED):`);
   for (const [strat, stat] of Object.entries(stratStats) as [BotStrategy, StratStats][]) {

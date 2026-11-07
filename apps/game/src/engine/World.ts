@@ -1171,6 +1171,35 @@ export class World {
     return (leftLead + rightLead) / 2;
   }
 
+  /**
+   * Định nghĩa tiền tuyến giao tranh chuẩn:
+   * - Trung bình vị trí quân tiên phong (đầu hàng) của hai phe.
+   * - Khi MỘT TRONG HAI PHE KHÔNG CÒN QUÂN SỐNG: trả về null (thay vì giá trị mặc định).
+   */
+  public get combatFrontlineX(): number | null {
+    let leftLead: number | null = null;
+    for (let i = 0; i < this.playerUnits.length; i++) {
+      const u = this.playerUnits[i]!;
+      if (u.isAlive && (leftLead === null || u.x > leftLead)) {
+        leftLead = u.x;
+      }
+    }
+
+    let rightLead: number | null = null;
+    for (let i = 0; i < this.botUnits.length; i++) {
+      const u = this.botUnits[i]!;
+      if (u.isAlive && (rightLead === null || u.x < rightLead)) {
+        rightLead = u.x;
+      }
+    }
+
+    if (leftLead === null || rightLead === null) {
+      return null;
+    }
+
+    return (leftLead + rightLead) / 2;
+  }
+
   public getSnapshot(): WorldSnapshot {
     return {
       status: this.status,
