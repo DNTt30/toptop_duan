@@ -2,73 +2,29 @@ import { chromium } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { createServer } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const gameRoot = path.resolve(__dirname, '..');
 const screenshotsDir = path.resolve(gameRoot, 'screenshots');
-const distDir = path.resolve(gameRoot, 'dist');
 
 if (!fs.existsSync(screenshotsDir)) {
   fs.mkdirSync(screenshotsDir, { recursive: true });
-}
-
-// MIME types cho router
-const MIME_TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.mjs': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg',
-  '.ico': 'image/x-icon',
-};
-
-const VIRTUAL_ORIGIN = 'http://singularity.local';
-
-async function setupPageRouting(page) {
-  await page.route(`${VIRTUAL_ORIGIN}/**`, async (route) => {
-    const url = new URL(route.request().url());
-    let reqPath = decodeURIComponent(url.pathname);
-    if (reqPath === '/' || reqPath === '') {
-      reqPath = '/index.html';
-    }
-
-    const filePath = path.join(distDir, reqPath.startsWith('/') ? reqPath.slice(1) : reqPath);
-
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      const ext = path.extname(filePath).toLowerCase();
-      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-      const body = fs.readFileSync(filePath);
-      await route.fulfill({
-        status: 200,
-        contentType,
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-        },
-        body,
-      });
-    } else {
-      console.warn(`[Route 404] File không tồn tại: ${filePath} (url: ${url.pathname})`);
-      await route.fulfill({
-        status: 404,
-        contentType: 'text/plain',
-        body: 'Not Found',
-      });
-    }
-  });
 }
 
 async function runVerification() {
   console.log('======================================================================');
   console.log('🚀 BẮT ĐẦU KIỂM THỬ NGHIỆM THU TOÀN DIỆN GOAL "THE SINGULARITY ODYSSEY"');
   console.log('======================================================================');
+
+  // Khởi chạy Vite Dev Server để các biến nội bộ (window.__world) hoạt động chuẩn ở môi trường dev
+  const server = await createServer({
+    root: gameRoot,
+    server: { port: 5174, host: '127.0.0.1' },
+    logLevel: 'error',
+  });
+  await server.listen();
+  const baseUrl = 'http://127.0.0.1:5174';
 
   const browser = await chromium.launch({
     headless: true,
@@ -85,7 +41,6 @@ async function runVerification() {
     ],
   });
 
-  const baseUrl = `${VIRTUAL_ORIGIN}/`;
   const consoleErrors = [];
 
   try {
@@ -97,7 +52,8 @@ async function runVerification() {
     console.log('----------------------------------------------------------------------');
 
     const matchPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-    await setupPageRouting(matchPage);
+    // Vite dev server đã trực tiếp phục vụ request
+    // await setupPageRouting(matchPage);
 
     matchPage.on('console', (msg) => {
       if (msg.type() === 'error') {
@@ -178,7 +134,7 @@ async function runVerification() {
     console.log('----------------------------------------------------------------------');
 
     const page16_9 = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-    await setupPageRouting(page16_9);
+    // await setupPageRouting(page16_9);
 
     page16_9.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(`[Console Error 16:9] ${msg.text()}`);
@@ -249,7 +205,7 @@ async function runVerification() {
     console.log('----------------------------------------------------------------------');
 
     const page9_16 = await browser.newPage({ viewport: { width: 720, height: 1280 } });
-    await setupPageRouting(page9_16);
+    // await setupPageRouting(page9_16);
 
     page9_16.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(`[Console Error 9:16] ${msg.text()}`);
@@ -317,7 +273,7 @@ async function runVerification() {
     console.log('----------------------------------------------------------------------');
 
     const page2P = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-    await setupPageRouting(page2P);
+    // await setupPageRouting(page2P);
 
     page2P.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(`[Console Error 2P] ${msg.text()}`);
@@ -364,7 +320,7 @@ async function runVerification() {
     console.log('----------------------------------------------------------------------');
 
     const pageLive = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-    await setupPageRouting(pageLive);
+    // await setupPageRouting(pageLive);
 
     pageLive.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(`[Console Error Live] ${msg.text()}`);
@@ -401,6 +357,7 @@ async function runVerification() {
     }
   } finally {
     await browser.close();
+    await server.close();
   }
 }
 

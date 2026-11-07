@@ -45,7 +45,7 @@ export const App: React.FC = () => {
     let isCancelled = false;
     const world = worldRef.current;
     const netSync = networkSyncRef.current;
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && import.meta.env.DEV) {
       (window as any).__world = world;
       (window as any).__netSync = netSync;
       (window as any).gameSettings = gameSettings;
