@@ -83,3 +83,6 @@
     - Chuẩn hóa toàn bộ ô 256x256, anchor Y = 0.90 (bàn chân tiếp đất chính xác tại Y = 230, sạch viền).
     - Xuất Atlas mở rộng 2048x1024, Contact Sheet PNG và dữ liệu selection.json từ retime.py.
     - Kiểm thử tự động Vitest 19/19 Tests PASS 100% & Build thành công.
+
+- **Đồng Bộ Git Remote:**
+  - Đã kết nối và đẩy toàn bộ mã nguồn dự án lên GitHub Repository: https://github.com/DNTt30/toptop_duan.git (branch main, clean working tree).
