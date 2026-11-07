@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AGES_DATA } from '../data/ages';
 import { SPRITE_CONFIGS } from '../data/sprites';
 import { spriteLoader } from '../engine/SpriteLoader';
+import { gameSettings, STORAGE_KEYS } from '../data/settings';
 
 interface CustomizerStudioProps {
   onBackToGame: () => void;
@@ -37,14 +38,12 @@ function createDefaultClubTemplate(): string[][] {
 
 export const CustomizerStudio: React.FC<CustomizerStudioProps> = ({ onBackToGame }) => {
   const [grid, setGrid] = useState<string[][]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('custom_weapon_grid_stone_melee');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          // ignore
-        }
+    const saved = gameSettings.getCustomWeaponGrid();
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        // ignore
       }
     }
     return createDefaultClubTemplate();
@@ -57,6 +56,18 @@ export const CustomizerStudio: React.FC<CustomizerStudioProps> = ({ onBackToGame
   const [previewFrameIdx, setPreviewFrameIdx] = useState<number>(0);
   const [liveSafeMode, setLiveSafeMode] = useState<boolean>(true);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    return gameSettings.subscribe((key, val) => {
+      if (key === STORAGE_KEYS.CUSTOM_WEAPON_GRID && val) {
+        try {
+          setGrid(JSON.parse(val));
+        } catch {
+          // ignore
+        }
+      }
+    });
+  }, []);
 
   // Canvas vẽ & Live Preview refs
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -247,10 +258,8 @@ export const CustomizerStudio: React.FC<CustomizerStudioProps> = ({ onBackToGame
     }
 
     const dataUrl = generateDataUrl(grid);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('custom_weapon_grid_stone_melee', JSON.stringify(grid));
-      localStorage.setItem('custom_weapon_stone_melee', dataUrl);
-    }
+    gameSettings.setCustomWeaponGrid(JSON.stringify(grid));
+    gameSettings.setCustomWeapon(dataUrl);
 
     setToastMsg('✅ ĐÃ LƯU & GẮN GẬY MỚI CHO NGƯỜI VƯỢN THÀNH CÔNG!');
     setTimeout(() => setToastMsg(null), 3000);

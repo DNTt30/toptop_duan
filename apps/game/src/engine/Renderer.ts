@@ -17,6 +17,7 @@ import { AGES_DATA, BASE_MAX_HP, LANE_WIDTH, type Team } from '../data/ages';
 import { getSpriteConfig, type SpriteConfig } from '../data/sprites';
 import { particleSystem } from './ParticleSystem';
 import { spriteLoader } from './SpriteLoader';
+import { gameSettings, STORAGE_KEYS } from '../data/settings';
 import { type Unit } from './Unit';
 import { type World } from './World';
 
@@ -38,6 +39,7 @@ export class GameRenderer {
   private customWeaponTextures: Map<string, Texture> = new Map();
   private turretSpriteContainer: Container = new Container();
   private turretSpritePool: Sprite[] = [];
+  private unsubscribeSettings: (() => void) | null = null;
 
   // Các lớp hiển thị phân tầng
   private skyGraphics: Graphics = new Graphics();
@@ -257,6 +259,19 @@ export class GameRenderer {
     });
 
     this.renderFullBackground(this.skyGraphics, this.farMountainGraphics, this.midLandmarkGraphics, this.groundGraphics, 1);
+
+    this.unsubscribeSettings = gameSettings.subscribe((key) => {
+      if (key === STORAGE_KEYS.CUSTOM_WEAPON) {
+        for (const tex of this.customWeaponTextures.values()) {
+          try {
+            tex.destroy(true);
+          } catch {
+            // ignore
+          }
+        }
+        this.customWeaponTextures.clear();
+      }
+    });
   }
 
   private async preloadTextures(): Promise<void> {
@@ -1309,9 +1324,7 @@ export class GameRenderer {
       if (unit.config.id === 'stone_melee' && unit.isAlive) {
         const customDataUrl =
           unit.customWeaponDataUrl ||
-          (unit.team === 'LEFT' && typeof window !== 'undefined'
-            ? localStorage.getItem('custom_weapon_stone_melee')
-            : null);
+          (unit.team === 'LEFT' ? gameSettings.getCustomWeapon() : null);
 
         if (customDataUrl) {
           let tex = this.customWeaponTextures.get(customDataUrl);
@@ -1642,6 +1655,16 @@ export class GameRenderer {
   }
 
   public destroy(): void {
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
+    for (const tex of this.customWeaponTextures.values()) {
+      try {
+        tex.destroy(true);
+      } catch {
+        // ignore
+      }
+    }
+    this.customWeaponTextures.clear();
     this.app?.destroy(true, { children: true });
     this.app = null;
   }

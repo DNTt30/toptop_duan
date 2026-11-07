@@ -4,6 +4,7 @@ import { GameLoop } from './engine/GameLoop';
 import { NetworkSync } from './engine/NetworkSync';
 import { GameRenderer } from './engine/Renderer';
 import { World, type WorldSnapshot } from './engine/World';
+import { gameSettings } from './data/settings';
 import { LiveEventManager } from './live/LiveEventSource';
 import { HUD } from './ui/HUD';
 import { OnlineLobbyModal } from './ui/OnlineLobbyModal';
@@ -212,10 +213,7 @@ export const App: React.FC = () => {
   const handleOpenOnlineLobby = (role: 'HOST' | 'GUEST', roomCode?: string) => {
     setShowStartSettings(false);
     setShowOnlineLobby(true);
-    const nickname =
-      typeof window !== 'undefined'
-        ? localStorage.getItem('singularity_nickname') || 'Chiến Binh'
-        : 'Chiến Binh';
+    const nickname = gameSettings.getNickname();
 
     if (roomCode === 'RANDOM') {
       networkSyncRef.current.matchmakeRandom(nickname);

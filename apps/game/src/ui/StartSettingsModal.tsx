@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { type BotDifficulty } from '../engine/BotAI';
+import { gameSettings } from '../data/settings';
 import { type NetworkSync } from '../engine/NetworkSync';
 import { type GameMode, type World, type WorldSnapshot } from '../engine/World';
 
@@ -41,10 +42,7 @@ export const StartSettingsModal: React.FC<StartSettingsModalProps> = ({
   const [botDiff, setBotDiff] = useState<BotDifficulty>(world.botAI.difficulty || 'NORMAL');
   const [roomCodeInput, setRoomCodeInput] = useState<string>('');
   const [nickname, setNickname] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('singularity_nickname') || `Chiến Binh ${Math.floor(Math.random() * 900 + 100)}`;
-    }
-    return 'Chiến Binh 01';
+    return gameSettings.getNickname();
   });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 

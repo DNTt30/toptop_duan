@@ -23,7 +23,9 @@ export interface UnitFrameConfig {
   attackFrames: FrameBox[];
 }
 
-const STORAGE_KEY = 'singularity_sprite_frame_overrides_v1';
+import { gameSettings, STORAGE_KEYS } from './settings';
+
+const STORAGE_KEY = STORAGE_KEYS.FRAME_OVERRIDES;
 
 // Cấu hình mẫu đã được cân chỉnh chuẩn xác 100% cho Người Vượn Đập Gậy (Caveman)
 export const DEFAULT_FRAME_PRESETS: Record<string, Partial<UnitFrameConfig>> = {
@@ -96,19 +98,15 @@ export const DEFAULT_FRAME_PRESETS: Record<string, Partial<UnitFrameConfig>> = {
  */
 export function loadAllFrameOverrides(): Record<string, UnitFrameConfig> {
   const result: Record<string, UnitFrameConfig> = {};
-
-  if (typeof window !== 'undefined') {
+  const raw = gameSettings.getFrameOverridesRaw();
+  if (raw) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        Object.assign(result, parsed);
-      }
+      const parsed = JSON.parse(raw);
+      Object.assign(result, parsed);
     } catch (e) {
-      console.warn('[FrameOverrides] Không thể đọc localStorage:', e);
+      console.warn('[FrameOverrides] Không thể đọc cấu hình:', e);
     }
   }
-
   return result;
 }
 
@@ -144,13 +142,12 @@ export function getUnitFrameOverride(unitId: string): UnitFrameConfig | null {
  * Lưu cấu hình tinh chỉnh của 1 quân vào localStorage
  */
 export function saveUnitFrameOverride(cfg: UnitFrameConfig): void {
-  if (typeof window === 'undefined') return;
   try {
     const all = loadAllFrameOverrides();
     all[cfg.unitId] = cfg;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    gameSettings.setFrameOverridesRaw(JSON.stringify(all));
   } catch (e) {
-    console.error('[FrameOverrides] Không thể lưu vào localStorage:', e);
+    console.error('[FrameOverrides] Không thể lưu cấu hình:', e);
   }
 }
 
@@ -158,11 +155,10 @@ export function saveUnitFrameOverride(cfg: UnitFrameConfig): void {
  * Xóa cấu hình tùy chỉnh để khôi phục lại mặc định
  */
 export function resetUnitFrameOverride(unitId: string): void {
-  if (typeof window === 'undefined') return;
   try {
     const all = loadAllFrameOverrides();
     delete all[unitId];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    gameSettings.setFrameOverridesRaw(JSON.stringify(all));
   } catch (e) {
     console.error('[FrameOverrides] Lỗi khi reset override:', e);
   }
