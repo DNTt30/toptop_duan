@@ -93,5 +93,18 @@
   - **Commit e260236 (Docs):** Cập nhật dữ liệu đo đạc thực nghiệm 3.000 trận vào `BALANCE_REPORT.md`.
   - **Toàn bộ Test Suite:** 9/9 Test files PASS, 51/51 Tests PASS 100%. TypeScript monorepo typecheck 0 lỗi.
 
+- **EVAL-11 (Nghiệm Thu Đo Lại Toàn Diện - Task T1c PHẦN 3b) ✅:**
+  - **Chỉ đo & báo cáo, KHÔNG sửa code game:** Viết các script benchmark độc lập song song đa luồng (`run-all-benchmarks.ts`, `matchWorker.ts`, `trace-unfinished.ts`, `verify-determinism.ts`).
+  - **Xác nhận Determinism & Math.random:** 10/10 ván cùng seed cho kết quả trùng khớp bit-for-bit từng tick. Toàn bộ `Math.random` trong engine loop đều đã được thay bằng PRNG có seed.
+  - **9 Nhóm Đối Xứng (9.000 ván):** Winrate hai phe đạt chuẩn 47.9% - 52.6% (95% Wilson Score bao trùm 50.0%), độ lệch tiền tuyến -15.3 px đến +11.9 px (cách xa ngưỡng +-100 px), tỷ lệ trống sân hai phe chênh lệch <= 0.3%.
+  - **6 Nhóm Ma Trận Độ Khó Đổi Bên (6.000 ván):**
+    + Hard vs Normal: Hard thắng trung bình 65.2% (>= 65%).
+    + Normal vs Easy: Normal thắng trung bình 93.6% (>= 70%). Độ chênh đổi bên 2.6% (<= 5%).
+    + Hard vs Easy: Hard thắng trung bình 97.2%. Độ chênh đổi bên 0.9% (<= 5%).
+  - **Phân tích UNFINISHED:** Quân chết chủ yếu do quân (tiền tuyến ở 1.700px - 2.900px ngoài tầm tháp 250px); tháp đơn lẻ không chặn được đợt đẩy; bot chi tiêu 97-99% vàng (không tích vàng).
+  - **Xác nhận vàng:** Tỷ lệ tự sinh là 3.0 - 4.5 vàng / giây mô phỏng (0.05 - 0.075 vàng / tick), thưởng diệt lính 60% giá thành.
+  - **Kiểm thử hệ thống & Bảo mật Production:** Typecheck 0 lỗi, 51/51 unit tests PASS, 5/5 integration tests PASS, production bundle 0 rò rỉ biến toàn cục `__world`, `__netSync`, `gameSettings`. Xác nhận 2 test E2E OBS hỏng từ trước tại commit `6cd7976` do format chuỗi text tiếng Việt.
+  - **Cập nhật Báo Cáo:** Đã xuất đầy đủ vào `BALANCE_REPORT.md`.
+
 - **Đồng Bộ Git Remote:**
   - Đã kết nối và đẩy toàn bộ mã nguồn dự án lên GitHub Repository: https://github.com/DNTt30/toptop_duan.git (branch main, clean working tree).
