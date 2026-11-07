@@ -9,7 +9,7 @@ import { BOT_DIFFICULTY_CONFIGS, STRATEGY_BALANCE_CONFIG } from '../data/aiBalan
 import { UPGRADE_CONFIG } from '../data/upgrades';
 import { type AgeManager } from './AgeManager';
 import { type Economy } from './Economy';
-import { fractionFromOwnBase } from './symmetry';
+import { distanceFromOwnBase, fractionFromOwnBase } from './symmetry';
 import { type TurretManager } from './Turret';
 import { type UltimateManager } from './Ultimate';
 import { type Unit } from './Unit';
@@ -113,29 +113,41 @@ export class BotAI {
       }
     }
 
-    // 3. Quyết định mua nâng cấp tháp canh thành (nếu có botUpgrades và chiến thuật cho phép)
+    // 3. Quyết định mua nâng cấp tháp canh thành và lính (nếu có botUpgrades và chiến thuật cho phép)
     if (botUpgrades) {
-      this.evaluateUpgrades(botEconomy, botAge.currentAge, botUpgrades, botTurrets);
+      this.evaluateUpgrades(botEconomy, botAge.currentAge, botUpgrades, botTurrets, botUnits);
     }
 
     // 4. Quyết định mua Tháp Canh
     this.evaluateTurretPurchase(botEconomy, ageConfig.turrets, botTurrets, botAge.currentAge);
 
     // 5. Quyết định sản xuất Lính (Spawn Units)
-    this.evaluateUnitSpawn(botEconomy, ageConfig.units, botUnits, playerUnits);
+    this.evaluateUnitSpawn(botEconomy, ageConfig.units, botUnits, playerUnits, botUpgrades, botAge.currentAge);
   }
 
   private evaluateUpgrades(
     economy: Economy,
     currentAge: number,
     upgrades: UpgradeManager,
-    botTurrets?: TurretManager
+    botTurrets?: TurretManager,
+    botUnits: readonly Unit[] = []
   ): void {
     if (this.strategy === 'SPAM_UNITS') return;
 
-    // Chỉ nâng cấp vũ khí trên thành
+    // 1. Nâng cấp vũ khí trên thành
     if (upgrades.canUpgradeTurret(economy, currentAge)) {
       upgrades.upgradeTurret(economy, currentAge, botTurrets);
+    }
+
+    // 2. Nâng cấp đơn vị lính (Ưu tiên cho FOCUS_UPGRADE hoặc khi dư dả vàng)
+    if (this.strategy === 'FOCUS_UPGRADE' || economy.gold >= 250) {
+      const unitTypes: UnitType[] = ['MELEE', 'TANK', 'RANGED'];
+      for (const t of unitTypes) {
+        if (upgrades.canUpgradeUnit(t, economy, currentAge)) {
+          upgrades.upgradeUnit(t, economy, currentAge, botUnits as Unit[]);
+          break;
+        }
+      }
     }
   }
 
@@ -177,7 +189,9 @@ export class BotAI {
     economy: Economy,
     units: readonly UnitConfig[],
     botUnits: readonly Unit[],
-    playerUnits: readonly Unit[]
+    playerUnits: readonly Unit[],
+    upgrades?: UpgradeManager,
+    currentAge: number = 1
   ): void {
     if (economy.spawnQueue.length >= 3) return; // Đang có quân trong hàng đợi
 
@@ -203,28 +217,52 @@ export class BotAI {
       return;
     }
 
-    // 2. CHIẾN THUẬT FOCUS UPGRADE (ƯU TIÊN TUYỆT ĐỐI NÂNG CẤP ĐẦU TIÊN)
+    // 2. CHIẾN THUẬT FOCUS UPGRADE (ƯU TIÊN NÂNG CẤP ĐẦU TIÊN)
     if (this.strategy === 'FOCUS_UPGRADE') {
       const myAliveCount = botUnits.filter((u) => u.isAlive).length;
-      const focusCfg = STRATEGY_BALANCE_CONFIG.FOCUS_UPGRADE;
+      // BẮT BUỘC giữ ít nhất 2 quân trên sân (1 Tank che chắn + 1 Melee/Ranged)
+      if (myAliveCount < 2) {
+        const hasTank = botUnits.some((u) => u.isAlive && u.config.type === 'TANK');
+        if (!hasTank && economy.canAfford(tank.cost)) {
+          economy.enqueueUnit(tank);
+          return;
+        }
+        if (economy.canAfford(melee.cost)) {
+          economy.enqueueUnit(melee);
+          return;
+        }
+      }
+
       const isUnderThreat = alivePlayers.some(
-        (u) => fractionFromOwnBase(this.team, u.x) <= focusCfg.threatDistanceFraction
+        (u) => fractionFromOwnBase(this.team, u.x) <= 0.35
       );
-      // Chỉ nhịn tiền khi ĐÃ CÓ quân trên sân, CHƯA BỊ đe dọa, và vàng chưa tràn kho
-      if (
-        myAliveCount >= focusCfg.minTroopsOnField &&
-        !isUnderThreat &&
-        economy.gold < focusCfg.maxGoldReserveBeforeSpawn
-      ) {
-        return; // Nhịn tiền để nâng cấp lính trước
+
+      // Nếu không bị đe dọa: nhịn tiền nếu sắp đủ mua nâng cấp tiếp theo
+      if (!isUnderThreat && upgrades) {
+        let minUpgradeCost: number | null = null;
+        for (const t of ['MELEE', 'TANK', 'RANGED'] as const) {
+          const lvl = upgrades.getUnitLevel(t);
+          if (lvl < UPGRADE_CONFIG.unit.maxLevel) {
+            const c = UPGRADE_CONFIG.getUnitUpgradeCost(lvl, currentAge);
+            if (c !== null && (minUpgradeCost === null || c < minUpgradeCost)) {
+              minUpgradeCost = c;
+            }
+          }
+        }
+        // Chỉ nhịn tiền khi đang gom dưới 180 vàng và thực sự có nâng cấp
+        if (minUpgradeCost !== null && economy.gold < minUpgradeCost && economy.gold < 180) {
+          return;
+        }
       }
     }
 
-    // 3. CHIẾN THUẬT BALANCED (CÓ TỪ 2 LÍNH GIỮ ĐƯỜNG -> DÀNH TIỀN NÂNG CẤP)
+    // 3. CHIẾN THUẬT BALANCED
     if (this.strategy === 'BALANCED') {
       const myAlive = botUnits.filter((u) => u.isAlive).length;
-      const balCfg = STRATEGY_BALANCE_CONFIG.BALANCED;
-      if (myAlive >= balCfg.minTroopsOnField && economy.gold < balCfg.saveGoldThreshold) {
+      const isUnderThreat = alivePlayers.some(
+        (u) => fractionFromOwnBase(this.team, u.x) <= 0.30
+      );
+      if (!isUnderThreat && myAlive >= 2 && economy.gold < 150) {
         return; // Đang có quân giữ đường, gom tiền nâng cấp
       }
     }
@@ -244,10 +282,15 @@ export class BotAI {
     if (this.difficulty === 'NORMAL') {
       // VỪA: 65% khắc chế lính tiên phong, 35% biến hóa chiến thuật ngẫu nhiên
       const roll = Math.random();
-      const frontPlayer =
-        this.team === 'RIGHT'
-          ? alivePlayers.sort((a, b) => b.x - a.x)[0]
-          : alivePlayers.sort((a, b) => a.x - b.x)[0];
+      let frontPlayer: Unit | undefined;
+      let minDistance = Infinity;
+      for (const u of alivePlayers) {
+        const d = distanceFromOwnBase(this.team, u.x);
+        if (d < minDistance) {
+          minDistance = d;
+          frontPlayer = u;
+        }
+      }
 
       if (roll < 0.65 && frontPlayer) {
         if (frontPlayer.config.type === 'TANK' && economy.canAfford(ranged.cost)) {
@@ -271,6 +314,13 @@ export class BotAI {
 
       if (economy.canAfford(chosenConfig.cost)) {
         economy.enqueueUnit(chosenConfig);
+        // Nếu còn dư vàng và hàng đợi còn chỗ: tiếp tục mua thêm 1 quân hỗ trợ tạo đợt đẩy (wave push)
+        if (economy.spawnQueue.length < 2) {
+          const supportUnits = units.filter((u) => u.type !== 'TANK' && economy.canAfford(u.cost));
+          if (supportUnits.length > 0) {
+            economy.enqueueUnit(supportUnits[0]!);
+          }
+        }
       }
       return;
     }
@@ -314,6 +364,13 @@ export class BotAI {
 
     if (economy.canAfford(chosenConfig.cost)) {
       economy.enqueueUnit(chosenConfig);
+      // Hard: Wave push hiệu quả cao khi còn dư vàng
+      if (economy.spawnQueue.length < 2) {
+        const supportUnits = units.filter((u) => u.type !== 'TANK' && economy.canAfford(u.cost));
+        if (supportUnits.length > 0) {
+          economy.enqueueUnit(supportUnits[0]!);
+        }
+      }
     }
   }
 }
