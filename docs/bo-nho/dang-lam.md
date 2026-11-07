@@ -84,5 +84,14 @@
     - Xuất Atlas mở rộng 2048x1024, Contact Sheet PNG và dữ liệu selection.json từ retime.py.
     - Kiểm thử tự động Vitest 19/19 Tests PASS 100% & Build thành công.
 
+- **EVAL-10 (Cân Bằng Hệ Thống Chiến Đấu, Đối Xứng & Ma Trận Độ Khó - Task T1c PHẦN 3):**
+  - **Commit de60ce9 (Bước 1):** Hạ tầng đối xứng toán học (`symmetry.ts`) & cấu hình độ khó, chiến thuật data-driven (`aiBalance.ts`). Triệt tiêu hằng số pixel tuyệt đối cũ.
+  - **Commit 2e6dca5 (Bước 2):** Vòng lặp tick 2 pha đồng thời (`World.ts` & `Unit.ts`): Pha 1 Quyết định (Decision) đọc snapshot đầu tick -> Pha 2 Thực thi (Execution) áp dụng đồng thời di chuyển và sát thương. Khóa an toàn vai trò SURRENDER qua mạng (`NetworkSync.ts`).
+  - **Commit 70a6292 (Bước 3):** Vùng rơi và tầm Ultimate đối xứng tuyệt đối qua tâm sân (`Ultimate.ts`). Seed PRNG deterministic.
+  - **Commit c6e2234 (Bước 4):** Ma trận độ khó (Hard vs Normal >= 65%, Normal vs Easy >= 70%) và tối ưu hóa chiến thuật `FOCUS_UPGRADE` (duy trì tối thiểu 2 lính, khử 100% kẹt 0 quân, % trống quân giảm xuống 1.1% - 1.2%).
+  - **Commit 48a37d4 (Bước 5):** Chuỗi phân định 4 nấc xác định khi 2 căn cứ vỡ cùng tick trong `World.checkBaseDestruction()` (Máu âm ít hơn -> Tổng sát thương -> Tổng HP quân & vàng -> Seed PRNG).
+  - **Commit e260236 (Docs):** Cập nhật dữ liệu đo đạc thực nghiệm 3.000 trận vào `BALANCE_REPORT.md`.
+  - **Toàn bộ Test Suite:** 9/9 Test files PASS, 51/51 Tests PASS 100%. TypeScript monorepo typecheck 0 lỗi.
+
 - **Đồng Bộ Git Remote:**
   - Đã kết nối và đẩy toàn bộ mã nguồn dự án lên GitHub Repository: https://github.com/DNTt30/toptop_duan.git (branch main, clean working tree).
