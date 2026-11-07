@@ -65,6 +65,20 @@ export class SpriteLoader {
   }
 
   /**
+   * Chuyển đổi bộ lọc Texture sang Nearest-Neighbor chuẩn Pixel Art retro
+   */
+  public setPixelScaleMode(isPixel: boolean): void {
+    for (const data of this.sprites.values()) {
+      if (data.atlasTexture?.source) {
+        data.atlasTexture.source.scaleMode = isPixel ? 'nearest' : 'linear';
+      }
+      for (const f of data.frames) {
+        if (f.source) f.source.scaleMode = isPixel ? 'nearest' : 'linear';
+      }
+    }
+  }
+
+  /**
    * Nạp một Sprite theo cấu hình SpriteConfig
    */
   public async loadSprite(config: SpriteConfig): Promise<LoadedSpriteData | null> {

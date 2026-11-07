@@ -243,8 +243,7 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
           {/* CỘT 1: CHỦ PHÒNG (HOST - PHE XANH TRÁI) */}
           <div
             style={{
-              background: 'rgba(59, 130, 246, 0.06)',
-              border: '1px solid rgba(59, 130, 246, 0.25)',
+              background: 'rgba(59, 130, 246, 0.08)',
               borderRadius: '12px',
               padding: '14px',
               display: 'flex',
@@ -269,8 +268,8 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
               👑
             </div>
             <div>
-              <div style={{ fontWeight: 800, fontSize: '14px', color: '#93c5fd' }}>
-                Chủ Phòng (P1)
+              <div style={{ fontWeight: 800, fontSize: '15px', color: '#93c5fd' }}>
+                {isHost ? (networkSync.playerName || 'Bạn') : (networkSync.opponentName || 'Chủ Phòng')}
               </div>
               <div style={{ fontSize: '11px', color: '#60a5fa', fontWeight: 600 }}>
                 {isHost ? '⭐️ Bạn (Host)' : 'Đối Thủ (Host)'}
@@ -308,8 +307,7 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
           {/* CỘT 2: KHÁCH (GUEST - PHE ĐỎ PHẢI) */}
           <div
             style={{
-              background: isConnected ? 'rgba(239, 68, 68, 0.06)' : 'rgba(255, 255, 255, 0.02)',
-              border: isConnected ? '1px solid rgba(239, 68, 68, 0.25)' : '1px solid rgba(255, 255, 255, 0.06)',
+              background: isConnected ? 'rgba(239, 68, 68, 0.08)' : 'rgba(255, 255, 255, 0.03)',
               borderRadius: '12px',
               padding: '14px',
               display: 'flex',
@@ -335,11 +333,11 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
               {isConnected ? '⚔️' : '⏳'}
             </div>
             <div>
-              <div style={{ fontWeight: 800, fontSize: '14px', color: isConnected ? '#fca5a5' : '#94a3b8' }}>
-                Người Chơi 2 (P2)
+              <div style={{ fontWeight: 800, fontSize: '15px', color: isConnected ? '#fca5a5' : '#94a3b8' }}>
+                {!isHost ? (networkSync.playerName || 'Bạn') : isConnected ? (networkSync.opponentName || 'Đối Thủ') : 'Đang Đợi Đối Thủ...'}
               </div>
               <div style={{ fontSize: '11px', color: isConnected ? '#f87171' : '#64748b', fontWeight: 600 }}>
-                {!isHost ? '⭐️ Bạn (Guest)' : isConnected ? 'Đối Thủ (Guest)' : 'Đang Đợi...'}
+                {!isHost ? '⭐️ Bạn (Guest)' : isConnected ? 'Đối Thủ (Guest)' : 'Đang Đợi Ghép...'}
               </div>
             </div>
             <div
@@ -348,6 +346,14 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
                 color: isConnected ? '#4ade80' : '#fbbf24',
                 borderRadius: '12px',
                 padding: '2px 8px',
+                fontSize: '10px',
+                fontWeight: 700,
+              }}
+            >
+              {isConnected ? '✅ ĐÃ THAM GIA' : '⏳ ĐANG ĐỢI...'}
+            </div>
+            <span style={{ fontSize: '10px', color: '#94a3b8' }}>Phe Đỏ (Phải)</span>
+          </div>
                 fontSize: '10px',
                 fontWeight: 700,
               }}

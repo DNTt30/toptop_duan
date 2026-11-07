@@ -40,6 +40,9 @@ export class Unit {
 
   public x: number = 0;
   public y: number = 0;
+  public prevX: number = 0;
+  public prevY: number = 0;
+  public customWeaponDataUrl: string | null = null;
   public baseY: number = 520; // Trục Y mặt đường chiến đấu
 
   public hp: number;
@@ -170,6 +173,9 @@ export class Unit {
     enemyBaseX: number,
     onCombatEvent: (event: CombatEvent) => void
   ): void {
+    this.prevX = this.x;
+    this.prevY = this.y;
+
     if (!this.isAlive) {
       if (this.state === 'DIE') {
         this.deathFadeTimer += dt;

@@ -40,6 +40,12 @@ export const StartSettingsModal: React.FC<StartSettingsModalProps> = ({
   const [selectedMode, setSelectedMode] = useState<GameMode>(snapshot.gameMode || 'SOLO');
   const [botDiff, setBotDiff] = useState<BotDifficulty>(world.botAI.difficulty || 'NORMAL');
   const [roomCodeInput, setRoomCodeInput] = useState<string>('');
+  const [nickname, setNickname] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('singularity_nickname') || `Chiến Binh ${Math.floor(Math.random() * 900 + 100)}`;
+    }
+    return 'Chiến Binh 01';
+  });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {

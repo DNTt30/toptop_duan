@@ -7,7 +7,7 @@ import { World, type WorldSnapshot } from './engine/World';
 import { LiveEventManager } from './live/LiveEventSource';
 import { HUD } from './ui/HUD';
 import { OnlineLobbyModal } from './ui/OnlineLobbyModal';
-import { PreviewGallery } from './ui/PreviewGallery';
+import { CustomizerStudio } from './ui/CustomizerStudio';
 import { StartSettingsModal } from './ui/StartSettingsModal';
 
 export const App: React.FC = () => {
@@ -212,10 +212,17 @@ export const App: React.FC = () => {
   const handleOpenOnlineLobby = (role: 'HOST' | 'GUEST', roomCode?: string) => {
     setShowStartSettings(false);
     setShowOnlineLobby(true);
-    if (role === 'HOST') {
-      networkSyncRef.current.hostRoom();
+    const nickname =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('singularity_nickname') || 'Chiến Binh'
+        : 'Chiến Binh';
+
+    if (roomCode === 'RANDOM') {
+      networkSyncRef.current.matchmakeRandom(nickname);
+    } else if (role === 'HOST') {
+      networkSyncRef.current.hostRoom(roomCode, nickname);
     } else if (roomCode) {
-      networkSyncRef.current.joinRoom(roomCode);
+      networkSyncRef.current.joinRoom(roomCode, nickname);
     }
   };
 
@@ -312,9 +319,9 @@ export const App: React.FC = () => {
         networkSync={networkSyncRef.current}
       />
 
-      {/* Phòng trưng bày Showcase Preview nếu mode=preview hoặc truy cập /preview */}
+      {/* Xưởng Tùy Biến Vũ Khí Pixel nếu mode=preview hoặc truy cập /preview */}
       {isPreview && (
-        <PreviewGallery
+        <CustomizerStudio
           onBackToGame={() => {
             setIsPreview(false);
             if (worldRef.current.status === 'PAUSED') {

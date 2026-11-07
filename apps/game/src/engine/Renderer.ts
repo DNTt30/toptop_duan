@@ -33,6 +33,9 @@ export class GameRenderer {
   private panoramaContainer: Container = new Container();
   private unitSpriteContainer: Container = new Container();
   private unitSpritePool: Sprite[] = [];
+  private customWeaponSpriteContainer: Container = new Container();
+  private customWeaponSpritePool: Sprite[] = [];
+  private customWeaponTextures: Map<string, Texture> = new Map();
   private turretSpriteContainer: Container = new Container();
   private turretSpritePool: Sprite[] = [];
 
@@ -81,7 +84,9 @@ export class GameRenderer {
   // Camera & Điều khiển bản đồ dài 4480px
   public cameraX: number = 0;
   public targetCameraX: number = 0;
+  public smoothedFrontlineX: number = 0;
   public manualControlTimer: number = 0;
+  public isPixelMode: boolean = true;
   private isDragging: boolean = false;
   private dragStartX: number = 0;
   private dragStartCameraX: number = 0;
@@ -123,6 +128,7 @@ export class GameRenderer {
     this.app.canvas.style.display = 'block';
     this.app.canvas.style.width = '100%';
     this.app.canvas.style.height = '100%';
+    this.app.canvas.style.imageRendering = 'pixelated';
     container.appendChild(this.app.canvas);
 
     // Cấu trúc phân tầng
@@ -161,6 +167,7 @@ export class GameRenderer {
     this.worldContainer.addChild(this.turretGraphics);
     this.worldContainer.addChild(this.turretSpriteContainer);
     this.worldContainer.addChild(this.unitSpriteContainer);
+    this.worldContainer.addChild(this.customWeaponSpriteContainer);
     this.worldContainer.addChild(this.unitGraphics);
     this.worldContainer.addChild(this.projGraphics);
     this.worldContainer.addChild(this.particleGraphics);
@@ -370,7 +377,7 @@ export class GameRenderer {
   /**
    * Vòng lặp render chính
    */
-  public render(_interpolation: number): void {
+  public render(interpolation: number = 1.0): void {
     if (!this.app) return;
 
     const dt = 1 / 60;
@@ -415,17 +422,18 @@ export class GameRenderer {
       this.rootContainer.position.set(this.baseContainerX, this.baseContainerY);
     }
 
-    // 2.5 Cập nhật Camera theo Tiền Tuyến hoặc Điều khiển thủ công (quay về sau 3s)
+    // 2.5 Cập nhật Camera theo Tiền Tuyến (Lọc rung mượt mà)
     this.updateCamera(dt);
 
-    // Di chuyển thế giới theo Camera
-    this.worldContainer.position.set(-this.cameraX, 0);
+    // Di chuyển thế giới theo Camera (pixel-snap khi bật pixel mode)
+    const worldCamX = this.isPixelMode ? Math.round(this.cameraX) : this.cameraX;
+    this.worldContainer.position.set(-worldCamX, 0);
 
     // Hiệu ứng Parallax cho các lớp nền
-    this.skyGraphics.position.set(-this.cameraX * 0.05, 0);
-    this.farMountainGraphics.position.set(-this.cameraX * 0.20, 0);
-    this.midLandmarkGraphics.position.set(-this.cameraX * 0.45, 0);
-    this.panoramaContainer.x = -this.cameraX * 0.45;
+    this.skyGraphics.position.set(-worldCamX * 0.05, 0);
+    this.farMountainGraphics.position.set(-worldCamX * 0.20, 0);
+    this.midLandmarkGraphics.position.set(-worldCamX * 0.45, 0);
+    this.panoramaContainer.x = -worldCamX * 0.45;
 
     // 3. Vẽ Chỉ báo Tiền Tuyến (Frontline Indicator)
     this.drawFrontlineIndicator();
@@ -433,11 +441,11 @@ export class GameRenderer {
     // 4. Vẽ Căn cứ Khổng lồ 260x220px + 3 ô Tháp canh
     this.drawBasesAndTurrets();
 
-    // 5. Vẽ Nhân vật Chibi to 90-110px viền 3px
-    this.drawChibiUnitsBatch();
+    // 5. Vẽ Nhân vật Chibi to 90-110px (Nội suy mượt 10/10)
+    this.drawChibiUnitsBatch(interpolation);
 
-    // 6. Vẽ Đạn đạo
-    this.drawProjectiles();
+    // 6. Vẽ Đạn đạo (Nội suy mượt 10/10)
+    this.drawProjectiles(interpolation);
 
     // 7. Vẽ Hạt chiến đấu (Sparks, Explosions, Trails, Death Stars)
     this.drawParticles();
@@ -469,19 +477,30 @@ export class GameRenderer {
   }
 
   /**
-   * Cập nhật chuyển động camera bám tiền tuyến bằng lerp
+   * Cập nhật chuyển động camera bám tiền tuyến bằng Exponential Moving Average & Deadzone khử rung
    */
   private updateCamera(dt: number): void {
     if (this.manualControlTimer > 0) {
       this.manualControlTimer -= dt;
     } else {
-      // Tự động bám tiền tuyến (Frontline) bằng lerp
       const frontlineX = this.world.frontlineX;
+      if (this.smoothedFrontlineX === 0) {
+        this.smoothedFrontlineX = frontlineX;
+      } else {
+        // Lọc rung mượt mà tiền tuyến (EMA damping)
+        this.smoothedFrontlineX += (frontlineX - this.smoothedFrontlineX) * (1 - Math.exp(-dt * 3.5));
+      }
+
       this.targetCameraX = Math.max(
         0,
-        Math.min(LANE_WIDTH - this.V_WIDTH, frontlineX - this.V_WIDTH / 2)
+        Math.min(LANE_WIDTH - this.V_WIDTH, this.smoothedFrontlineX - this.V_WIDTH / 2)
       );
-      this.cameraX += (this.targetCameraX - this.cameraX) * (1 - Math.exp(-dt * 4.0));
+
+      // Deadzone 0.5px để triệt tiêu rung giật vi mô
+      const camDiff = this.targetCameraX - this.cameraX;
+      if (Math.abs(camDiff) > 0.4) {
+        this.cameraX += camDiff * (1 - Math.exp(-dt * 4.5));
+      }
     }
     this.cameraX = Math.max(0, Math.min(LANE_WIDTH - this.V_WIDTH, this.cameraX));
     this.world.cameraX = this.cameraX;
@@ -1125,7 +1144,7 @@ export class GameRenderer {
   // 4. NHÂN VẬT CHIBI TO RÕ (90-110px, VIỀN 3px, ĐẦU 45%)
   // ==========================================
 
-  private drawChibiUnitsBatch(): void {
+  private drawChibiUnitsBatch(interpolation: number = 1.0): void {
     const g = this.unitGraphics;
     g.clear();
 
@@ -1133,6 +1152,8 @@ export class GameRenderer {
     allUnits.sort((a, b) => a.y - b.y);
 
     let spriteIdx = 0;
+    let weaponSpriteIdx = 0;
+    const interp = Math.max(0, Math.min(1.0, interpolation));
 
     for (const unit of allUnits) {
       const isLeft = unit.team === 'LEFT';
@@ -1147,7 +1168,9 @@ export class GameRenderer {
       // Chi tiết bằng code: Mờ dần khi chết
       const fadeAlpha = !unit.isAlive ? Math.max(0, 1.0 - unit.deathFadeTimer / unit.deathDuration) : 1.0;
 
-      const unitX = unit.x;
+      // Tọa độ nội suy mượt mà 10/10 + Snap pixel khi bật Pixel Mode
+      const rawUnitX = unit.prevX !== undefined ? unit.prevX + (unit.x - unit.prevX) * interp : unit.x;
+      const unitX = this.isPixelMode ? Math.round(rawUnitX) : rawUnitX;
       const unitY = this.GROUND_Y + (unit.y - 520) * 0.4;
 
       // 1. Chi tiết bằng code: Bóng elip dưới chân tách riêng (thu nhỏ mờ khi bay)
@@ -1279,11 +1302,76 @@ export class GameRenderer {
 
       g.roundRect(unitX - barW / 2, barY, barW, 6, 3).fill({ color: 0x0f172a, alpha: 0.85 * fadeAlpha });
       g.roundRect(unitX - barW / 2, barY, barW * hpPct, 6, 3).fill({ color: hpColor, alpha: fadeAlpha });
+
+      // ==========================================
+      // GẮN VŨ KHÍ TÙY BIẾN CHO NGƯỜI VƯỢN (HAND SOCKET ATTACHMENT)
+      // ==========================================
+      if (unit.config.id === 'stone_melee' && unit.isAlive) {
+        const customDataUrl =
+          unit.customWeaponDataUrl ||
+          (unit.team === 'LEFT' && typeof window !== 'undefined'
+            ? localStorage.getItem('custom_weapon_stone_melee')
+            : null);
+
+        if (customDataUrl) {
+          let tex = this.customWeaponTextures.get(customDataUrl);
+          if (!tex) {
+            try {
+              tex = Texture.from(customDataUrl);
+              if (tex.source) tex.source.scaleMode = 'nearest';
+              this.customWeaponTextures.set(customDataUrl, tex);
+            } catch (e) {
+              // ignore
+            }
+          }
+
+          if (tex) {
+            let weaponSprite = this.customWeaponSpritePool[weaponSpriteIdx];
+            if (!weaponSprite) {
+              weaponSprite = new Sprite();
+              this.customWeaponSpritePool.push(weaponSprite);
+              this.customWeaponSpriteContainer.addChild(weaponSprite);
+            }
+            weaponSpriteIdx++;
+
+            weaponSprite.visible = true;
+            weaponSprite.texture = tex;
+            weaponSprite.anchor.set(0.2, 0.85); // Gốc chuôi gậy
+
+            // Tính vị trí bàn tay theo cử động animation
+            let handOffsetX = 18 * dir;
+            let handOffsetY = -unitH * 0.44;
+            let handRot = (-0.2 + Math.sin(unit.walkAnimPhase * Math.PI) * 0.15) * dir;
+
+            if (unit.state === 'ATTACK') {
+              const swingProg = unit.attackAnimProgress;
+              handOffsetX = (16 + lunge * 0.6) * dir;
+              handOffsetY = -unitH * (0.42 - Math.sin(swingProg * Math.PI) * 0.14);
+              handRot = (-0.95 + swingProg * 2.3) * dir;
+            }
+
+            const handX = finalX + handOffsetX;
+            const handY = actualY + handOffsetY;
+
+            weaponSprite.position.set(
+              this.isPixelMode ? Math.round(handX) : handX,
+              this.isPixelMode ? Math.round(handY) : handY
+            );
+            weaponSprite.rotation = handRot;
+            const weaponScale = 36 / 32;
+            weaponSprite.scale.set(weaponScale * dir, weaponScale);
+            weaponSprite.alpha = fadeAlpha;
+          }
+        }
+      }
     }
 
     // Ẩn các sprite không dùng trong pool
     for (let i = spriteIdx; i < this.unitSpritePool.length; i++) {
       this.unitSpritePool[i]!.visible = false;
+    }
+    for (let i = weaponSpriteIdx; i < this.customWeaponSpritePool.length; i++) {
+      this.customWeaponSpritePool[i]!.visible = false;
     }
   }
 
@@ -1380,11 +1468,19 @@ export class GameRenderer {
   // 5. ĐẠN ĐẠO & VỆT SÁNG (TRAILS)
   // ==========================================
 
-  private drawProjectiles(): void {
+  private drawProjectiles(interpolation: number = 1.0): void {
     const g = this.projGraphics;
     g.clear();
 
+    const interp = Math.max(0, Math.min(1.0, interpolation));
+
     for (const proj of this.world.projectilePool.getActive()) {
+      // Nội suy vị trí đạn lướt siêu êm 10/10
+      const rawPx = proj.prevX !== undefined ? proj.prevX + (proj.x - proj.prevX) * interp : proj.x;
+      const rawPy = proj.prevY !== undefined ? proj.prevY + (proj.y - proj.prevY) * interp : proj.y;
+      const px = this.isPixelMode ? Math.round(rawPx) : rawPx;
+      const py = this.isPixelMode ? Math.round(rawPy) : rawPy;
+
       if (proj.isUltimateBarrage) {
         // Đạn Đại Pháo Hoàng Gia / Mưa Thiên Thạch rơi chéo rực lửa từ bầu trời
         const speed = Math.hypot(proj.vx, proj.vy) || 1;
@@ -1393,33 +1489,33 @@ export class GameRenderer {
         const tailLen = proj.radius * 4.2;
 
         g.poly([
-          proj.x - uy * proj.radius * 0.9, proj.y + ux * proj.radius * 0.9,
-          proj.x + uy * proj.radius * 0.9, proj.y - ux * proj.radius * 0.9,
-          proj.x + ux * tailLen, proj.y + uy * tailLen,
+          px - uy * proj.radius * 0.9, py + ux * proj.radius * 0.9,
+          px + uy * proj.radius * 0.9, py - ux * proj.radius * 0.9,
+          px + ux * tailLen, py + uy * tailLen,
         ]).fill({ color: proj.color, alpha: 0.55 });
 
         g.poly([
-          proj.x - uy * proj.radius * 0.5, proj.y + ux * proj.radius * 0.5,
-          proj.x + uy * proj.radius * 0.5, proj.y - ux * proj.radius * 0.5,
-          proj.x + ux * (tailLen * 0.65), proj.y + uy * (tailLen * 0.65),
+          px - uy * proj.radius * 0.5, py + ux * proj.radius * 0.5,
+          px + uy * proj.radius * 0.5, py - ux * proj.radius * 0.5,
+          px + ux * (tailLen * 0.65), py + uy * (tailLen * 0.65),
         ]).fill({ color: 0xfef08a, alpha: 0.85 });
 
-        g.circle(proj.x, proj.y, proj.radius * 1.25).fill({ color: proj.color, alpha: 0.45 });
-        g.circle(proj.x, proj.y, proj.radius).fill(0x292524);
-        g.circle(proj.x, proj.y, proj.radius).stroke({ width: 2.5, color: proj.color });
-        g.circle(proj.x - 2, proj.y - 2, proj.radius * 0.45).fill(0xfef08a);
-        particleSystem.spawnTrail(proj.x, proj.y, proj.color);
+        g.circle(px, py, proj.radius * 1.25).fill({ color: proj.color, alpha: 0.45 });
+        g.circle(px, py, proj.radius).fill(0x292524);
+        g.circle(px, py, proj.radius).stroke({ width: 2.5, color: proj.color });
+        g.circle(px - 2, py - 2, proj.radius * 0.45).fill(0xfef08a);
+        particleSystem.spawnTrail(px, py, proj.color);
       } else if (proj.radius >= 8) {
-        // Đá tảng Máy Bắn Đá (Catapult Boulder): Khối đá cuội to tròn có bóng đổ & vệt bụi
-        g.circle(proj.x, proj.y, proj.radius).fill(0x44403c);
-        g.circle(proj.x, proj.y, proj.radius).stroke({ width: 2, color: 0x1c1917 });
-        g.circle(proj.x - 2, proj.y - 2, proj.radius * 0.45).fill(0x78716c);
-        particleSystem.spawnDust(proj.x, proj.y);
+        // Đá tảng Máy Bắn Đá: Khối đá cuội to tròn có bóng đổ & vệt bụi
+        g.circle(px, py, proj.radius).fill(0x44403c);
+        g.circle(px, py, proj.radius).stroke({ width: 2, color: 0x1c1917 });
+        g.circle(px - 2, py - 2, proj.radius * 0.45).fill(0x78716c);
+        particleSystem.spawnDust(px, py);
       } else {
         // Đầu đạn thông thường
-        g.circle(proj.x, proj.y, proj.radius * 1.3).fill(proj.color);
-        g.circle(proj.x, proj.y, proj.radius * 0.7).fill(0xffffff);
-        particleSystem.spawnTrail(proj.x, proj.y, proj.color);
+        g.circle(px, py, proj.radius * 1.3).fill(proj.color);
+        g.circle(px, py, proj.radius * 0.7).fill(0xffffff);
+        particleSystem.spawnTrail(px, py, proj.color);
       }
     }
   }

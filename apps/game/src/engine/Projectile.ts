@@ -19,6 +19,8 @@ export class Projectile {
 
   public x: number = 0;
   public y: number = 0;
+  public prevX: number = 0;
+  public prevY: number = 0;
   public targetX: number = 0;
   public targetY: number = 0;
   public targetUnitId: string | null = null;
@@ -63,6 +65,8 @@ export class Projectile {
     this.active = true;
     this.x = startX;
     this.y = startY;
+    this.prevX = startX;
+    this.prevY = startY;
     this.targetX = targetX;
     this.targetY = targetY;
     this.targetUnitId = targetUnitId;
@@ -86,6 +90,9 @@ export class Projectile {
 
   public update(dt: number): boolean {
     if (!this.active) return false;
+
+    this.prevX = this.x;
+    this.prevY = this.y;
 
     this.lifeTime += dt;
     if (this.lifeTime >= this.maxLifeTime) {

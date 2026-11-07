@@ -40,6 +40,8 @@ export class NetworkSync {
   public connectionState: ConnectionState = 'DISCONNECTED';
   public roomId: string = '';
   public pingMs: number = 0;
+  public playerName: string = 'Chiến Binh';
+  public opponentName: string = 'Đang Đợi...';
 
   private broadcastChannel: BroadcastChannel | null = null;
   private peerConnection: RTCPeerConnection | null = null;
@@ -94,8 +96,10 @@ export class NetworkSync {
   /**
    * Tạo phòng mới (HOST - Phe Trái / P1)
    */
-  public hostRoom(customRoomId?: string): string {
+  public hostRoom(customRoomId?: string, nickname?: string): string {
     this.disconnect();
+    if (nickname) this.playerName = nickname;
+    this.opponentName = 'Đang Đợi...';
     this.role = 'HOST';
     this.connectionState = 'HOSTING';
     this.roomId = customRoomId || `SING-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -108,15 +112,17 @@ export class NetworkSync {
     return this.roomId;
   }
 
-  public createRoom(customRoomId?: string): string {
-    return this.hostRoom(customRoomId);
+  public createRoom(customRoomId?: string, nickname?: string): string {
+    return this.hostRoom(customRoomId, nickname);
   }
 
   /**
    * Gia nhập phòng đã tạo (GUEST - Phe Phải / P2)
    */
-  public joinRoom(roomId: string): void {
+  public joinRoom(roomId: string, nickname?: string): void {
     this.disconnect();
+    if (nickname) this.playerName = nickname;
+    this.opponentName = 'Đang Đợi...';
     this.role = 'GUEST';
     this.connectionState = 'CONNECTING';
     this.roomId = roomId.toUpperCase().trim();
@@ -132,6 +138,7 @@ export class NetworkSync {
         type: 'ROOM_JOIN',
         senderRole: 'GUEST',
         roomId: this.roomId,
+        payload: { playerName: this.playerName },
         timestamp: Date.now(),
       });
     };
@@ -151,6 +158,67 @@ export class NetworkSync {
 
     this.startHeartbeat();
     this.notify();
+  }
+
+  /**
+   * Ghép trận ngẫu nhiên (Online Auto Matchmaking)
+   */
+  public matchmakeRandom(nickname: string): void {
+    if (nickname) this.playerName = nickname;
+    let poolChannel: BroadcastChannel | null = null;
+    let matched = false;
+
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        poolChannel = new BroadcastChannel('sg_net_matchmaking_pool');
+        poolChannel.onmessage = (evt) => {
+          const data = evt.data;
+          if (data && data.type === 'MATCH_WAITING_HOST' && !matched) {
+            matched = true;
+            try {
+              poolChannel?.close();
+            } catch {
+              // ignore
+            }
+            this.joinRoom(data.roomId, nickname);
+          }
+        };
+
+        // Bắn tín hiệu tìm đối thủ
+        poolChannel.postMessage({
+          type: 'MATCH_LOOKING_GUEST',
+          nickname: this.playerName,
+          timestamp: Date.now(),
+        });
+      }
+    } catch {
+      // fallback
+    }
+
+    // Nếu sau 320ms chưa có Host nào có sẵn, trở thành Host và đợi Guest vào
+    setTimeout(() => {
+      if (matched) return;
+      const pubRoom = `PUB-${Math.floor(1000 + Math.random() * 9000)}`;
+      this.hostRoom(pubRoom, nickname);
+
+      if (poolChannel) {
+        poolChannel.onmessage = (evt) => {
+          const data = evt.data;
+          if (data && data.type === 'MATCH_LOOKING_GUEST') {
+            poolChannel?.postMessage({
+              type: 'MATCH_WAITING_HOST',
+              roomId: pubRoom,
+              hostName: this.playerName,
+            });
+          }
+        };
+        poolChannel.postMessage({
+          type: 'MATCH_WAITING_HOST',
+          roomId: pubRoom,
+          hostName: this.playerName,
+        });
+      }
+    }, 320);
   }
 
   /**
@@ -275,14 +343,18 @@ export class NetworkSync {
       case 'ROOM_JOIN':
         if (this.role === 'HOST') {
           this.connectionState = 'CONNECTED';
+          if (msg.payload?.playerName) {
+            this.opponentName = msg.payload.playerName;
+          }
           this.sendMessage({
             type: 'ROOM_ACCEPTED',
             senderRole: 'HOST',
             roomId: this.roomId,
+            payload: { playerName: this.playerName },
             timestamp: Date.now(),
           });
           this.notify();
-          this.world.addFloatingText('P2 ĐÃ GIA NHẬP PHÒNG!', 800, 300, 0x22c55e);
+          this.world.addFloatingText(`${this.opponentName} ĐÃ GIA NHẬP!`, 800, 300, 0x22c55e);
         }
         break;
 
@@ -293,8 +365,11 @@ export class NetworkSync {
             this.handshakeInterval = null;
           }
           this.connectionState = 'CONNECTED';
+          if (msg.payload?.playerName) {
+            this.opponentName = msg.payload.playerName;
+          }
           this.notify();
-          this.world.addFloatingText('ĐÃ KẾT NỐI VỚI HOST!', 800, 300, 0x22c55e);
+          this.world.addFloatingText(`ĐÃ KẾT NỐI VỚI ${this.opponentName}!`, 800, 300, 0x22c55e);
         }
         break;
 
