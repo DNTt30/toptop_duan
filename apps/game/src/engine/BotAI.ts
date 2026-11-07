@@ -5,9 +5,11 @@
  */
 
 import { type Team, type UnitConfig, type UnitType } from '../data/ages';
+import { BOT_DIFFICULTY_CONFIGS, STRATEGY_BALANCE_CONFIG } from '../data/aiBalance';
 import { UPGRADE_CONFIG } from '../data/upgrades';
 import { type AgeManager } from './AgeManager';
 import { type Economy } from './Economy';
+import { fractionFromOwnBase } from './symmetry';
 import { type TurretManager } from './Turret';
 import { type UltimateManager } from './Ultimate';
 import { type Unit } from './Unit';
@@ -54,16 +56,18 @@ export class BotAI {
     this.decisionCooldown -= dt;
     if (this.decisionCooldown > 0) return;
 
+    const diffCfg = BOT_DIFFICULTY_CONFIGS[this.difficulty];
+
     // Thiết lập nhịp suy nghĩ theo độ khó (có jitter nhẹ để tránh 2 bot lockstep)
-    const baseInterval = this.difficulty === 'EASY' ? 2.5 : this.difficulty === 'NORMAL' ? 1.2 : 0.6;
-    const jitter = (Math.random() - 0.5) * (baseInterval * 0.4);
+    const baseInterval = diffCfg.decisionIntervalBase;
+    const jitter = (Math.random() - 0.5) * (baseInterval * diffCfg.decisionJitterFraction);
     this.decisionCooldown = Math.max(0.2, baseInterval + jitter);
 
     const ageConfig = botAge.getConfig();
 
     // 1. Kiểm tra lên Kỷ Nguyên mới
     if (botEconomy.canAgeUp(botAge.currentAge)) {
-      if (this.difficulty !== 'EASY' || Math.random() < 0.6) {
+      if (Math.random() < diffCfg.ageUpAcceptProbability) {
         if (botAge.advanceAge()) {
           botEconomy.setAge(botAge.currentAge);
           if (botUpgrades) {
@@ -77,30 +81,33 @@ export class BotAI {
       }
     }
 
-    // 2. Quyết định sử dụng Tuyệt Chiêu Tối Thượng
+    // 2. Quyết định sử dụng Tuyệt Chiêu Tối Thượng (Đối xứng theo tỉ lệ cự ly từ căn cứ nhà)
     if (botUltimate.canTrigger(botAge.currentAge)) {
       const alivePlayers = playerUnits.filter((u) => u.isAlive);
-      const enemyThreateningBase =
-        this.team === 'RIGHT'
-          ? alivePlayers.some((u) => u.x > 1150)
-          : alivePlayers.some((u) => u.x < 450);
+      const enemyThreateningBase = alivePlayers.some(
+        (u) => fractionFromOwnBase(this.team, u.x) <= diffCfg.threatDistanceFraction
+      );
+
+      const enemyPastMid =
+        alivePlayers.filter((u) => fractionFromOwnBase(this.team, u.x) <= 0.5).length >=
+        diffCfg.pastMidEnemiesCount;
 
       if (this.difficulty === 'EASY') {
-        if (enemyThreateningBase && Math.random() < 0.45) {
+        if (enemyThreateningBase && Math.random() < diffCfg.threatUltimateProbability) {
           onTriggerUltimate();
         }
       } else if (this.difficulty === 'NORMAL') {
         // NORMAL: Tung chiêu khi căn cứ bị đe dọa hoặc địch có cụm quân đông (>= 5 lính)
-        if (enemyThreateningBase || alivePlayers.length >= 5) {
+        if (enemyThreateningBase || alivePlayers.length >= diffCfg.swarmingEnemiesCount) {
           onTriggerUltimate();
         }
       } else {
-        // HARD: Tung chiêu khi căn cứ nguy cấp HOẶC địch có từ 4 lính dồn dập HOẶC địch tràn qua sân mình
-        const enemyPastMid =
-          this.team === 'RIGHT'
-            ? alivePlayers.filter((u) => u.x > 850).length >= 2
-            : alivePlayers.filter((u) => u.x < 750).length >= 2;
-        if (enemyThreateningBase || alivePlayers.length >= 4 || enemyPastMid) {
+        // HARD: Tung chiêu khi căn cứ nguy cấp HOẶC địch có cụm đông HOẶC tràn qua sân nhà
+        if (
+          enemyThreateningBase ||
+          alivePlayers.length >= diffCfg.swarmingEnemiesCount ||
+          enemyPastMid
+        ) {
           onTriggerUltimate();
         }
       }
@@ -142,10 +149,12 @@ export class BotAI {
     const turretConfig = turrets[0];
     if (!turretConfig) return;
 
+    const diffCfg = BOT_DIFFICULTY_CONFIGS[this.difficulty];
+
     // Tìm slot tháp còn trống; nếu đã kín thì mở thêm slot khi dư vàng (Normal/Hard)
     let emptySlotIdx = turretManager.slots.findIndex((s) => s === null);
     if (emptySlotIdx === -1) {
-      if (this.difficulty !== 'EASY' && turretManager.canAddSlot()) {
+      if (diffCfg.canAddTurretSlot && turretManager.canAddSlot()) {
         const slotCost = UPGRADE_CONFIG.getAddSlotCost(turretManager.slots.length, currentAge);
         if (economy.gold >= slotCost * 1.5 && economy.spendGold(slotCost)) {
           turretManager.addSlot();
@@ -155,12 +164,7 @@ export class BotAI {
       if (emptySlotIdx === -1) return;
     }
 
-    const goldThreshold =
-      this.difficulty === 'EASY'
-        ? turretConfig.cost * 3.0
-        : this.difficulty === 'NORMAL'
-        ? turretConfig.cost * 1.8
-        : turretConfig.cost * 1.1;
+    const goldThreshold = turretConfig.cost * diffCfg.turretBuyGoldMultiplier;
 
     if (economy.gold >= goldThreshold) {
       if (economy.spendGold(turretConfig.cost)) {
@@ -201,10 +205,17 @@ export class BotAI {
 
     // 2. CHIẾN THUẬT FOCUS UPGRADE (ƯU TIÊN TUYỆT ĐỐI NÂNG CẤP ĐẦU TIÊN)
     if (this.strategy === 'FOCUS_UPGRADE') {
-      const isUnderThreat = alivePlayers.some((u) =>
-        this.team === 'RIGHT' ? u.x > 3400 : u.x < 1100
+      const myAliveCount = botUnits.filter((u) => u.isAlive).length;
+      const focusCfg = STRATEGY_BALANCE_CONFIG.FOCUS_UPGRADE;
+      const isUnderThreat = alivePlayers.some(
+        (u) => fractionFromOwnBase(this.team, u.x) <= focusCfg.threatDistanceFraction
       );
-      if (!isUnderThreat) {
+      // Chỉ nhịn tiền khi ĐÃ CÓ quân trên sân, CHƯA BỊ đe dọa, và vàng chưa tràn kho
+      if (
+        myAliveCount >= focusCfg.minTroopsOnField &&
+        !isUnderThreat &&
+        economy.gold < focusCfg.maxGoldReserveBeforeSpawn
+      ) {
         return; // Nhịn tiền để nâng cấp lính trước
       }
     }
@@ -212,7 +223,8 @@ export class BotAI {
     // 3. CHIẾN THUẬT BALANCED (CÓ TỪ 2 LÍNH GIỮ ĐƯỜNG -> DÀNH TIỀN NÂNG CẤP)
     if (this.strategy === 'BALANCED') {
       const myAlive = botUnits.filter((u) => u.isAlive).length;
-      if (myAlive >= 2 && economy.gold < 180) {
+      const balCfg = STRATEGY_BALANCE_CONFIG.BALANCED;
+      if (myAlive >= balCfg.minTroopsOnField && economy.gold < balCfg.saveGoldThreshold) {
         return; // Đang có quân giữ đường, gom tiền nâng cấp
       }
     }

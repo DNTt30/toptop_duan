@@ -126,8 +126,11 @@ export class UltimateManager {
     const minLaneX = BASE_WIDTH + 90;
     const maxLaneX = LANE_WIDTH - BASE_WIDTH - 90;
 
-    let zoneMinX = isTeamLeft ? 700 : 400;
-    let zoneMaxX = isTeamLeft ? maxLaneX : LANE_WIDTH - 700;
+    // Vùng rơi mặc định đối xứng gương hoàn hảo qua tâm sân
+    const ownBaseBuffer = BASE_WIDTH + 260; // 400px
+    const enemyBaseBuffer = BASE_WIDTH + 90; // 230px
+    let zoneMinX = isTeamLeft ? ownBaseBuffer : enemyBaseBuffer;
+    let zoneMaxX = isTeamLeft ? LANE_WIDTH - enemyBaseBuffer : LANE_WIDTH - ownBaseBuffer;
 
     if (aliveEnemies.length > 0) {
       const xs = aliveEnemies.map((e) => e.x);
