@@ -48,6 +48,7 @@ export const App: React.FC = () => {
     if (typeof window !== 'undefined') {
       (window as any).__world = world;
       (window as any).__netSync = netSync;
+      (window as any).gameSettings = gameSettings;
     }
 
     // Đọc URL Search Params (?mode=solo|local2p|online2p|live&bg=transparent&room=...)
