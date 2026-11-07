@@ -37,6 +37,7 @@ export class UltimateManager {
   public cooldownTimer: number = 0;
   public readonly team: Team;
   public resurrectPoolRemaining: number = 5; // Tối đa 5 quân hồi sinh từ System Reboot
+  public random: () => number = Math.random;
 
   constructor(team: Team) {
     this.team = team;
@@ -155,29 +156,33 @@ export class UltimateManager {
 
     const barrageShells: BarrageShellSpec[] = [];
     for (let i = 0; i < shellCount; i++) {
-      const delay = i * 0.14 + Math.random() * 0.06;
-      const speed = 640 + Math.random() * 90;
-      const startY = -80 - Math.random() * 40;
+      const delay = i * 0.14 + this.random() * 0.06;
+      const speed = 640 + this.random() * 90;
+      const startY = -80 - this.random() * 40;
       const estFlightTime = delay + (536 - startY) / speed;
 
       let targetX: number;
-      if (aliveEnemies.length > 0 && Math.random() < 0.72) {
+      if (aliveEnemies.length > 0 && this.random() < 0.72) {
         // Nhắm đón đầu quanh khu vực quân địch nhưng kèm độ lệch ngẫu nhiên (±165px)
         // Với bán kính nổ 62-70px -> Xác suất mỗi quả trúng ~42-50% (dao động tự nhiên ~20% - 80% trên 8 quả!)
-        const pick = aliveEnemies[Math.floor(Math.random() * aliveEnemies.length)]!;
+        const pick = aliveEnemies[Math.floor(this.random() * aliveEnemies.length)]!;
         const moveDir = pick.team === 'LEFT' ? 1 : -1;
         const predictedX =
           pick.state === 'WALK' ? pick.x + moveDir * pick.config.speed * estFlightTime : pick.x;
-        const scatter = (Math.random() - 0.5) * 330;
-        targetX = Math.max(minLaneX, Math.min(maxLaneX, predictedX + scatter));
+        const scatter = (this.random() - 0.5) * 330;
+        // Nhân dir vào scatter để đảm bảo phép chiếu gương đối xứng tuyệt đối qua tâm sân
+        targetX = Math.max(minLaneX, Math.min(maxLaneX, predictedX + dir * scatter));
       } else {
-        // Rơi phân bổ ngẫu nhiên trên vùng chiến sự
-        targetX = zoneMinX + Math.random() * Math.max(120, zoneMaxX - zoneMinX);
+        // Rơi phân bổ ngẫu nhiên trên vùng chiến sự (đối xứng gương qua tâm)
+        const span = Math.max(120, zoneMaxX - zoneMinX);
+        const r = this.random();
+        targetX = isTeamLeft ? zoneMinX + r * span : zoneMaxX - r * span;
+        targetX = Math.max(minLaneX, Math.min(maxLaneX, targetX));
       }
 
       barrageShells.push({
         delay,
-        startX: targetX - dir * (130 + Math.random() * 70),
+        startX: targetX - dir * (130 + this.random() * 70),
         startY,
         targetX,
         targetY: 536,
@@ -208,7 +213,7 @@ export class UltimateManager {
     if (this.resurrectPoolRemaining <= 0) return false;
     if (!unit.status.has('REBOOT_MARKED')) return false;
 
-    const roll = Math.random();
+    const roll = this.random();
     if (roll < 0.3) {
       this.resurrectPoolRemaining -= 1;
       return true;

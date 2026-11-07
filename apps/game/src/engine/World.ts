@@ -155,6 +155,8 @@ export class World {
 
   constructor(isHeadless: boolean = false) {
     this.isHeadless = isHeadless;
+    this.playerUltimate.random = () => this.random();
+    this.botUltimate.random = () => this.random();
   }
 
   public initDefaultTurrets(): void {
