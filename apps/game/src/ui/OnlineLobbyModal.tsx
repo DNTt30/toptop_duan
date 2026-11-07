@@ -354,14 +354,6 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
             </div>
             <span style={{ fontSize: '10px', color: '#94a3b8' }}>Phe Đỏ (Phải)</span>
           </div>
-                fontSize: '10px',
-                fontWeight: 700,
-              }}
-            >
-              {isConnected ? '✅ ĐÃ THAM GIA' : '⏳ ĐANG ĐỢI...'}
-            </div>
-            <span style={{ fontSize: '10px', color: '#94a3b8' }}>Phe Đỏ (Phải)</span>
-          </div>
         </div>
 
         {/* KHU VỰC THÔNG BÁO TRẠNG THÁI & NÚT HÀNH ĐỘNG */}
