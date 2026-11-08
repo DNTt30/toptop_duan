@@ -13,10 +13,11 @@
 
 ## 2. Tiến Độ Các Bước
 - [x] **Bước 1 (Quy chuẩn):** Ban hành tài liệu [docs/architecture-standards.md](file:///d:/toptop_duan/docs/architecture-standards.md) và tích hợp vào [docs/AGENTS.md](file:///d:/toptop_duan/docs/AGENTS.md).
-- [ ] **Bước 2 (Khảo sát vi phạm):** Quét grep và audit hiện trạng 4 khu vực (`apps/backend`, `apps/game`, `apps/overlay`, `packages/shared`).
-- [ ] **Bước 3 (Refactor Backend):** Bọc `db.transaction()` cho các tác vụ đa bảng; tách `buddha-server.ts` mỏng lại; tạo `AuthorizationPolicy`.
-- [ ] **Bước 4 (Chuẩn hóa i18n):** Gom chuỗi thông báo và text UI vào từ điển ngôn ngữ.
-- [ ] **Bước 5 (Nghiệm thu Eval):** Chạy full bộ test (unit, integration, e2e) và grep proof.
+- [x] **Bước 2 (Phân quyền tập trung):** Xây dựng `AuthorizationPolicy` tại `apps/backend/src/security/policies/authorization.policy.ts` (10/10 tests PASS).
+- [x] **Bước 3 (Bảo vệ tính toàn vẹn & Append-only):** Viết test `tests/integration/audit-immutability.test.ts` kiểm chứng Grep Proof = 0 câu lệnh DELETE trên bảng audit, rollback 100% khi lỗi (3/3 tests PASS).
+- [x] **Bước 4 (Tách Thin Controller):** Bóc tách `buddha-server.ts` từ 888 dòng thành 5 Thin Controller chuyên biệt (`http.controller.ts`, `pairing-http.controller.ts`, `static-asset.controller.ts`, `manager-socket.controller.ts`, `overlay-socket.controller.ts`). Toàn bộ 45/45 tests PASS.
+- [ ] **Bước 5 (Chuẩn hóa i18n):** Gom chuỗi thông báo và text UI vào từ điển ngôn ngữ.
+- [ ] **Bước 6 (Nghiệm thu Eval tổng thể):** Typecheck toàn monorepo và chạy test E2E.
 
 ---
 
