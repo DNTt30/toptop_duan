@@ -44,6 +44,7 @@ import { OverlaySessionStore } from '../security/overlay-session-store';
 import { PairingManager } from '../security/pairing';
 import { RateLimiter, RATE_LIMITS } from '../security/rate-limiter';
 import { constantTimeEquals } from '../security/tokens';
+import { AuthorizationPolicy, type AuthActor } from '../security/policies/authorization.policy';
 
 export interface BuddhaServerOptions {
   port?: number;
@@ -318,7 +319,8 @@ export class BuddhaServer {
   private async handlePairApprove(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const authHeader = req.headers.authorization;
     const bearer = extractBearerToken(authHeader);
-    if (!bearer || !constantTimeEquals(bearer, this.managerToken)) {
+    const actor = AuthorizationPolicy.authenticateManager(bearer, this.managerToken);
+    if (!actor || !AuthorizationPolicy.can(actor, 'security:approve_overlay_pair')) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Invalid manager token' } })
@@ -518,10 +520,16 @@ export class BuddhaServer {
         if (!parsed.success) {
           return next(new Error('INVALID_HANDSHAKE: Manager handshake schema mismatch'));
         }
-        if (!constantTimeEquals(parsed.data.token, this.managerToken)) {
+        const actor = AuthorizationPolicy.authenticateManager(
+          parsed.data.token,
+          this.managerToken,
+          parsed.data.instanceId
+        );
+        if (!actor) {
           return next(new Error('UNAUTHORIZED: Invalid manager token'));
         }
-        (socket as any).clientRole = 'MANAGER' as ClientRole;
+        (socket as any).authActor = actor;
+        (socket as any).clientRole = actor.role as ClientRole;
         return next();
       }
 
@@ -535,11 +543,17 @@ export class BuddhaServer {
         const cookies = parseCookies(socket.handshake.headers.cookie);
         const overlayCookie = cookies['bls_overlay_session'];
 
-        if (!this.sessionStore.isValid(overlayCookie)) {
+        const actor = AuthorizationPolicy.authenticateOverlay(
+          overlayCookie,
+          this.sessionStore,
+          parsed.data.instanceId
+        );
+        if (!actor) {
           return next(new Error('OVERLAY_PAIRING_REQUIRED'));
         }
 
-        (socket as any).clientRole = 'OVERLAY' as ClientRole;
+        (socket as any).authActor = actor;
+        (socket as any).clientRole = actor.role as ClientRole;
         return next();
       }
 
@@ -574,11 +588,11 @@ export class BuddhaServer {
   }
 
   private attachManagerEvents(socket: Socket): void {
-    // Cổng kiểm tra Allowlist & Rate Limit Lớp 6
+    // Cổng kiểm tra Allowlist & Rate Limit Lớp 6 qua AuthorizationPolicy
     socket.onAny((eventName, ...args) => {
       const ack = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined;
 
-      if (!(MANAGER_EVENT_ALLOWLIST as readonly string[]).includes(eventName)) {
+      if (!AuthorizationPolicy.isManagerEvent(eventName)) {
         this.logger.warn('Blocked disallowed manager event', { eventName });
         if (ack) {
           ack({ ok: false, error: { code: 'FORBIDDEN_ROLE', message: `Event ${eventName} not permitted for MANAGER` } });
@@ -742,7 +756,7 @@ export class BuddhaServer {
     socket.onAny((eventName, ...args) => {
       const ack = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined;
 
-      if (!(OVERLAY_EVENT_ALLOWLIST as readonly string[]).includes(eventName)) {
+      if (!AuthorizationPolicy.isOverlayEvent(eventName)) {
         this.logger.warn('Blocked disallowed overlay event', { eventName });
         if (ack) {
           ack({ ok: false, error: { code: 'FORBIDDEN_ROLE', message: `Event ${eventName} not permitted for OVERLAY` } });
