@@ -1,11 +1,27 @@
 # Giấy Nhớ Việc Đang Làm (dang-lam.md)
 
 ## 1. Trạng Thái Hiện Tại
-- **Module:** Hoàn thiện game "The Singularity Odyssey" (@singularity/game) thành bản chơi được và phát được trên livestream: 6 thời kỳ, chơi đơn và hai người (cùng máy, online), đồ họa sprite thống nhất, âm thanh, hiệu ứng, chế độ Live/OBS.
-- **Trạng thái:** **HOÀN THÀNH TOÀN DIỆN 100% (GOAL COMPLETE) ✅**
-- **Nghiệm thu:** Đã vượt qua toàn bộ 6/6 tiêu chí nghiệm thu tự động bằng Playwright (`verify-goal.mjs`), 0 lỗi console, tốc độ khung hình 195 - 218 FPS (vượt xa chuẩn 60 FPS).
+- **Module:** Áp dụng Chuẩn Kiến Trúc Doanh Nghiệp 6 Lớp (Enterprise Architecture Standards) vào Monorepo `toptop_duan`.
+- **Trạng thái:** **ĐANG TRIỂN KHAI (IN PROGRESS)**
+- **Mục tiêu:**
+  1. Kiến trúc Thin Controller (< 100 dòng, Service tách biệt, Repository độc lập).
+  2. Phân quyền tập trung Single Source of Truth (Policy tập trung, cấm if-else role rải rác).
+  3. Tính toàn vẹn Transaction & Tính bất biến Append-only (better-sqlite3 transaction, không sửa/xóa audit log).
+  4. Đa ngôn ngữ i18n (Tách toàn bộ text hardcode ra dictionary JSON).
+  5. Kỷ luật Git (Lịch sử sạch, scope chuẩn, atomic commits).
+  6. Tư duy bàn giao Eval Mindset (Typecheck + Tests + Grep Proof = 0).
 
-## 2. Kế Hoạch 6 Bước Đã Thực Hiện
+## 2. Tiến Độ Các Bước
+- [x] **Bước 1 (Quy chuẩn):** Ban hành tài liệu [docs/architecture-standards.md](file:///d:/toptop_duan/docs/architecture-standards.md) và tích hợp vào [docs/AGENTS.md](file:///d:/toptop_duan/docs/AGENTS.md).
+- [ ] **Bước 2 (Khảo sát vi phạm):** Quét grep và audit hiện trạng 4 khu vực (`apps/backend`, `apps/game`, `apps/overlay`, `packages/shared`).
+- [ ] **Bước 3 (Refactor Backend):** Bọc `db.transaction()` cho các tác vụ đa bảng; tách `buddha-server.ts` mỏng lại; tạo `AuthorizationPolicy`.
+- [ ] **Bước 4 (Chuẩn hóa i18n):** Gom chuỗi thông báo và text UI vào từ điển ngôn ngữ.
+- [ ] **Bước 5 (Nghiệm thu Eval):** Chạy full bộ test (unit, integration, e2e) và grep proof.
+
+---
+
+## 3. Lịch Sử Các Module Trước Đã Hoàn Thành
+- **Game The Singularity Odyssey (@singularity/game):** Đã hoàn tất 100%, cân bằng đối xứng, bot AI RUSH/TIMING, đạt 195 - 218 FPS, 51 unit tests PASS, 134 integration tests PASS, Playwright E2E PASS. Đã push nhánh `fix/build-lobby` lên remote `origin`.
 - [x] **Bước 1:** Nâng cấp World Engine hỗ trợ 3 chế độ (Solo vs Bot 3 cấp độ, Local 2P trên cùng máy, Online 2P P2P) + Module `NetworkSync.ts` (WebRTC DataChannel & BroadcastChannel offline).
 - [x] **Bước 2:** Preload toàn diện 24 sprites cả 6 Kỷ Nguyên (`preloadAllAges`), thiết kế kiến trúc căn cứ riêng biệt 6 thời kỳ, bảo toàn texture khi crossfade nền (`Renderer.ts`, `SpriteLoader.ts`).
 - [x] **Bước 3:** Nâng cấp Web Audio API tổng hợp (`playUpgrade`, `playAgeUp`, `playUltimate`, `playVictory`, `playDefeat`), nạp nhạc nền BGM `theme.mp4`, nút bật/tắt âm thanh toàn cục (`AudioSynth.ts`).

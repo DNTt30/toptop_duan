@@ -1,8 +1,8 @@
 # AGENTS.md — Quy Chuẩn Hoạt Động Của AI Agent Trong Dự Án
 
 ## 1. Dự Án & Phong Cách Làm Việc
-- Dự án: **The Singularity Odyssey** (Game Web 2D Kéo Co Đẩy Đường 6 Kỷ Nguyên)
-- Công nghệ: **Vite, React 18, TypeScript, PixiJS v8, Web Audio API, Headless Sim**
+- Dự án: **The Singularity Odyssey & BuddhaLive** (Monorepo: Game 2D, OBS Overlay, Desktop Manager, Backend)
+- Công nghệ: **TypeScript, Vite, React 18, PixiJS v8, Socket.IO, better-sqlite3**
 - Phong cách: Trả lời ngắn gọn, đi thẳng vào kết quả, tiếng Việt tự nhiên, kèm link file click được.
 
 ## 2. Quy Tắc Bất Di Bất Dịch (1000 Giờ Workflow)
@@ -14,7 +14,10 @@
 6. **Không báo xong bừa (Eval):** Tự chạy build/test kiểm tra kết quả và nêu rõ bằng chứng trước khi báo xong.
 7. **Cập nhật bộ nhớ:** Chốt quyết định ghi vào `docs/bo-nho/muc-luc.md`; dừng phiên cập nhật `docs/bo-nho/dang-lam.md`.
 
-## 3. Bản Đồ Bộ Nhớ Dự Án
+## 3. Tiêu Chuẩn Kỹ Thuật & Kiến Trúc
+- **Chuẩn kiến trúc doanh nghiệp 6 lớp:** [docs/architecture-standards.md](file://docs/architecture-standards.md) (Thin Controller, Policy tập trung, DB Transaction & Append-only, i18n, Kỷ luật Git, Eval Mindset).
+
+## 4. Bản Đồ Bộ Nhớ Dự Án
 - Việc đang làm dở dang: [docs/bo-nho/dang-lam.md](file://docs/bo-nho/dang-lam.md)
 - Sổ ghi chép quyết định đã chốt: [docs/bo-nho/muc-luc.md](file://docs/bo-nho/muc-luc.md)
 - Kế hoạch chi tiết tác vụ lớn: [docs/bo-nho/ke-hoach.md](file://docs/bo-nho/ke-hoach.md)
