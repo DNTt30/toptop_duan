@@ -15,6 +15,7 @@ import type { OverlaySessionStore } from '../../security/overlay-session-store';
 import type { PairingManager } from '../../security/pairing';
 import { AuthorizationPolicy } from '../../security/policies/authorization.policy';
 import type { RateLimiter } from '../../security/rate-limiter';
+import { parseSocketPayload } from './controller-utils';
 
 export interface ManagerSocketControllerOptions {
   engine: EventEngine;
@@ -59,38 +60,20 @@ export class ManagerSocketController {
         return;
       }
 
-      // 3. Phân phối sự kiện
+      // 3. Phân phối sự kiện và validate qua Zod Schema (DRY pattern)
       if (eventName === 'demo:trigger_gift') {
-        if (this.options.liveManager.isLiveActive()) {
-          if (ack) {
-            ack({
-              ok: false,
-              error: {
-                code: 'FORBIDDEN_ROLE',
-                message:
-                  'DEMO_BLOCKED_DURING_LIVE_SESSION: Không thể phát sự kiện Demo khi phiên kết nối LIVE đang hoạt động.',
-              },
-            });
-          }
-          return;
-        }
+        if (!this.ensureNotLive(ack)) return;
+        const payload = parseSocketPayload(DemoTriggerGiftPayloadSchema, args[0], ack);
+        if (!payload) return;
 
-        const payload = args[0];
-        const parsed = DemoTriggerGiftPayloadSchema.safeParse(payload);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-        const result = this.options.engine.triggerDemoGift(parsed.data);
+        const result = this.options.engine.triggerDemoGift(payload);
         if (ack) ack({ ok: true, data: result });
         this.notifyState();
       } else if (eventName === 'security:approve_overlay_pair') {
-        const parsed = ApproveOverlayPairPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-        const ok = this.options.pairingManager.approve(parsed.data.pairingId, parsed.data.code);
+        const payload = parseSocketPayload(ApproveOverlayPairPayloadSchema, args[0], ack);
+        if (!payload) return;
+
+        const ok = this.options.pairingManager.approve(payload.pairingId, payload.code);
         if (ack) {
           ack(ok ? { ok: true } : { ok: false, error: { code: 'NOT_FOUND', message: 'Pairing entry not found' } });
         }
@@ -104,84 +87,18 @@ export class ManagerSocketController {
         if (ack) ack({ ok: true, data: { revokedCount: revoked } });
         this.notifyState();
       } else if (eventName === 'queue:control') {
-        const parsed = QueueControlPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
+        const payload = parseSocketPayload(QueueControlPayloadSchema, args[0], ack);
+        if (!payload) return;
 
-        const { action, reason } = parsed.data;
-        let controlResult: QueueControlResult;
-
-        if (action === 'PAUSE') {
-          this.options.engine.pauseQueue();
-          controlResult = {
-            action,
-            success: true,
-            affectedCount: 0,
-            engineStatus: this.options.engine.getEngineStatus(),
-            isPaused: true,
-            message: 'Queue dispatch paused',
-          };
-        } else if (action === 'RESUME') {
-          this.options.engine.resumeQueue();
-          controlResult = {
-            action,
-            success: true,
-            affectedCount: 0,
-            engineStatus: this.options.engine.getEngineStatus(),
-            isPaused: false,
-            message: 'Queue dispatch resumed',
-          };
-        } else if (action === 'SKIP') {
-          const skipRes = this.options.engine.skipCurrent(reason, { barrierMs: 150 });
-          controlResult = {
-            action,
-            success: skipRes.success,
-            affectedCount: skipRes.success ? 1 : 0,
-            engineStatus: this.options.engine.getEngineStatus(),
-            isPaused: this.options.engine.getIsPaused(),
-            message: skipRes.success
-              ? `Skipped active execution ${skipRes.skippedId}`
-              : 'No active execution to skip',
-          };
-        } else {
-          // CLEAR
-          const clearRes = this.options.engine.clearQueue(reason);
-          controlResult = {
-            action,
-            success: true,
-            affectedCount: clearRes.clearedCount,
-            engineStatus: this.options.engine.getEngineStatus(),
-            isPaused: this.options.engine.getIsPaused(),
-            message: `Cleared ${clearRes.clearedCount} executions from queue`,
-          };
-        }
-
+        const controlResult = this.handleQueueControl(payload.action, payload.reason);
         if (ack) ack({ ok: true, data: controlResult });
         this.notifyState();
       } else if (eventName === 'demo:run_scenario') {
-        if (this.options.liveManager.isLiveActive()) {
-          if (ack) {
-            ack({
-              ok: false,
-              error: {
-                code: 'FORBIDDEN_ROLE',
-                message:
-                  'DEMO_BLOCKED_DURING_LIVE_SESSION: Không thể khởi chạy kịch bản Demo mô phỏng khi phiên kết nối LIVE đang hoạt động.',
-              },
-            });
-          }
-          return;
-        }
+        if (!this.ensureNotLive(ack)) return;
+        const payload = parseSocketPayload(DemoRunScenarioPayloadSchema, args[0], ack);
+        if (!payload) return;
 
-        const parsed = DemoRunScenarioPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-
-        void this.options.demoSimulator.runScenario(parsed.data.scenario).then((scenarioRes) => {
+        void this.options.demoSimulator.runScenario(payload.scenario).then((scenarioRes) => {
           if (ack) ack({ ok: true, data: scenarioRes });
           this.notifyState();
         });
@@ -208,6 +125,76 @@ export class ManagerSocketController {
         if (ack) ack({ ok: true, data: { report, format } });
       }
     });
+  }
+
+  /**
+   * Helper kiểm tra không cho phép Demo khi phiên Live đang chạy.
+   */
+  private ensureNotLive(ack?: (res: any) => void): boolean {
+    if (this.options.liveManager.isLiveActive()) {
+      if (ack) {
+        ack({
+          ok: false,
+          error: {
+            code: 'FORBIDDEN_ROLE',
+            message:
+              'DEMO_BLOCKED_DURING_LIVE_SESSION: Không thể phát sự kiện Demo khi phiên kết nối LIVE đang hoạt động.',
+          },
+        });
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Helper xử lý nghiệp vụ điều khiển hàng đợi (PAUSE, RESUME, SKIP, CLEAR).
+   */
+  private handleQueueControl(action: 'PAUSE' | 'RESUME' | 'SKIP' | 'CLEAR', reason?: string): QueueControlResult {
+    const engine = this.options.engine;
+    if (action === 'PAUSE') {
+      engine.pauseQueue();
+      return {
+        action,
+        success: true,
+        affectedCount: 0,
+        engineStatus: engine.getEngineStatus(),
+        isPaused: true,
+        message: 'Queue dispatch paused',
+      };
+    }
+    if (action === 'RESUME') {
+      engine.resumeQueue();
+      return {
+        action,
+        success: true,
+        affectedCount: 0,
+        engineStatus: engine.getEngineStatus(),
+        isPaused: false,
+        message: 'Queue dispatch resumed',
+      };
+    }
+    if (action === 'SKIP') {
+      const skipRes = engine.skipCurrent(reason, { barrierMs: 150 });
+      return {
+        action,
+        success: skipRes.success,
+        affectedCount: skipRes.success ? 1 : 0,
+        engineStatus: engine.getEngineStatus(),
+        isPaused: engine.getIsPaused(),
+        message: skipRes.success ? `Skipped active execution ${skipRes.skippedId}` : 'No active execution to skip',
+      };
+    }
+    // CLEAR
+    const clearRes = engine.clearQueue(reason);
+    return {
+      action,
+      success: true,
+      affectedCount: clearRes.clearedCount,
+      engineStatus: engine.getEngineStatus(),
+      isPaused: engine.getIsPaused(),
+      message: `Cleared ${clearRes.clearedCount} executions from queue`,
+    };
   }
 
   private notifyState(): void {

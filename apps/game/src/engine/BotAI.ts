@@ -101,18 +101,16 @@ export class BotAI {
 
     // 2. Quyết định sử dụng Tuyệt Chiêu Tối Thượng (Đối xứng theo tỉ lệ cự ly từ căn cứ nhà)
     if (botUltimate.canTrigger(botAge.currentAge)) {
-      const alivePlayers = playerUnits.filter((u) => u.isAlive);
-      const enemyThreateningBase = alivePlayers.some(
-        (u) => fractionFromOwnBase(this.team, u.x) <= diffCfg.threatDistanceFraction
-      );
+      const alivePlayers = this.getAlive(playerUnits);
+      const enemyThreateningBase = this.isThreatened(alivePlayers, diffCfg.threatDistanceFraction);
 
       const enemyPastMid =
         alivePlayers.filter((u) => fractionFromOwnBase(this.team, u.x) <= 0.5).length >=
         diffCfg.pastMidEnemiesCount;
 
       if (this.strategy === 'RUSH') {
-        const aliveBots = botUnits.filter((u) => u.isAlive);
-        const myPushingUnits = aliveBots.filter((u) => fractionFromOwnBase(this.team, u.x) > 0.45);
+        const aliveBots = this.getAlive(botUnits);
+        const myPushingUnits = this.getPushing(aliveBots, 0.45);
         // Dùng ultimate khi đợt quân đang đẩy hoặc khi địch dồn cụm
         const isPushing = aliveBots.length >= 3 && myPushingUnits.length >= 2;
         const isEnemyClustered = alivePlayers.length >= 3 || enemyThreateningBase;
@@ -120,8 +118,8 @@ export class BotAI {
           onTriggerUltimate();
         }
       } else if (this.strategy === 'TIMING') {
-        const aliveBots = botUnits.filter((u) => u.isAlive);
-        const myPushingUnits = aliveBots.filter((u) => fractionFromOwnBase(this.team, u.x) > 0.40);
+        const aliveBots = this.getAlive(botUnits);
+        const myPushingUnits = this.getPushing(aliveBots, 0.40);
         // Khi đã vượt kỷ nguyên và đợt quân thế hệ mới đang tràn qua sân địch -> tung ulti hủy diệt
         const isTimingPush = botAge.currentAge > opponentAge && myPushingUnits.length >= 2;
         if (isTimingPush || enemyThreateningBase || alivePlayers.length >= 4) {
@@ -271,27 +269,19 @@ export class BotAI {
   ): void {
     if (economy.spawnQueue.length >= 3) return; // Đang có quân trong hàng đợi
 
-    const alivePlayers = playerUnits.filter((u) => u.isAlive);
+    const alivePlayers = this.getAlive(playerUnits);
     const [melee, ranged, tank, special] = units;
     if (!melee || !ranged || !tank) return;
 
     // 1. CHIẾN THUẬT RUSH: DỒN QUÂN THÀNH ĐỢT (WAVE RUSH)
     if (this.strategy === 'RUSH') {
-      const myAlive = botUnits.filter((u) => u.isAlive);
-      const isUnderThreat = alivePlayers.some(
-        (u) => fractionFromOwnBase(this.team, u.x) <= 0.30
-      );
+      const myAlive = this.getAlive(botUnits);
+      const isUnderThreat = this.isThreatened(alivePlayers, 0.30);
 
       // Tình huống khẩn cấp: căn cứ bị uy hiếp và trên sân ít hơn 2 quân
       if (isUnderThreat && myAlive.length < 2) {
-        if (economy.canAfford(tank.cost)) {
-          economy.enqueueUnit(tank);
-          return;
-        }
-        if (economy.canAfford(melee.cost)) {
-          economy.enqueueUnit(melee);
-          return;
-        }
+        if (this.tryEnqueue(economy, tank)) return;
+        if (this.tryEnqueue(economy, melee)) return;
       }
 
       // Ngưỡng chi phí một đợt quân 3 con (Tank + Ranged + Melee)
@@ -299,104 +289,60 @@ export class BotAI {
 
       // Nếu đang gom quân và chưa đủ waveCost
       if (economy.gold < waveCost) {
-        // Nếu trên sân hoàn toàn trống quân (0 quân sống) và đủ tiền mua lính giữ đường:
-        if (myAlive.length === 0 && economy.canAfford(tank.cost)) {
-          economy.enqueueUnit(tank);
+        if (myAlive.length === 0) {
+          this.tryEnqueue(economy, tank);
         }
         return;
       }
 
       // Đã tích đủ waveCost -> Bung toàn bộ đợt quân dồn dập
-      if (economy.canAfford(tank.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(tank);
-      }
-      if (economy.canAfford(ranged.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(ranged);
-      }
-      if (economy.canAfford(melee.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(melee);
-      }
-      if (special && economy.canAfford(special.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(special);
-      }
+      this.tryEnqueue(economy, tank);
+      this.tryEnqueue(economy, ranged);
+      this.tryEnqueue(economy, melee);
+      this.tryEnqueue(economy, special);
       return;
     }
 
     // 2. CHIẾN THUẬT TIMING: TÍCH ĐỦ LÊN KỶ NGUYÊN RỒI ĐẨY BẰNG ĐỘI QUÂN THẾ HỆ MỚI
     if (this.strategy === 'TIMING') {
-      const myAlive = botUnits.filter((u) => u.isAlive);
+      const myAlive = this.getAlive(botUnits);
 
       // Giai đoạn 1: Chưa vượt kỷ nguyên -> Phòng thủ giữ nhịp, tiết kiệm tối đa vàng
       if (currentAge <= opponentAge) {
         if (myAlive.length < 2) {
-          if (economy.canAfford(melee.cost)) {
-            economy.enqueueUnit(melee);
-            return;
-          }
-          if (economy.canAfford(tank.cost)) {
-            economy.enqueueUnit(tank);
-            return;
-          }
+          if (this.tryEnqueue(economy, melee)) return;
+          if (this.tryEnqueue(economy, tank)) return;
         }
         return; // Đã có quân giữ nhịp, giữ vàng để bung khi lên đời!
       }
 
-      // Giai đoạn 2: ĐÃ VƯỢT KỶ NGUYÊN (currentAge > opponentAge) -> CỬA SỔ TIMING BÙNG NỔ!
-      // Bung toàn bộ kho vàng mua dồn dập các đơn vị tối tân của kỷ nguyên mới
-      if (economy.canAfford(tank.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(tank);
-      }
-      if (special && economy.canAfford(special.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(special);
-      }
-      if (economy.canAfford(ranged.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(ranged);
-      }
-      if (economy.canAfford(melee.cost) && economy.spawnQueue.length < 3) {
-        economy.enqueueUnit(melee);
-      }
+      // Giai đoạn 2: ĐÃ VƯỢT KỶ NGUYÊN -> CỬA SỔ TIMING BÙNG NỔ!
+      this.tryEnqueue(economy, tank);
+      this.tryEnqueue(economy, special);
+      this.tryEnqueue(economy, ranged);
+      this.tryEnqueue(economy, melee);
       return;
     }
 
     // 3. CHIẾN THUẬT SPAM QUÂN (RUSH & SWARM ĐỘI HÌNH)
     if (this.strategy === 'SPAM_UNITS') {
       const hasTank = botUnits.some((u) => u.isAlive && u.config.type === 'TANK');
-      if (!hasTank && economy.canAfford(tank.cost)) {
-        economy.enqueueUnit(tank);
-        return;
-      }
-      if (economy.canAfford(ranged.cost) && this.rng() < 0.5) {
-        economy.enqueueUnit(ranged);
-        return;
-      }
-      if (economy.canAfford(melee.cost)) {
-        economy.enqueueUnit(melee);
-        return;
-      }
+      if (!hasTank && this.tryEnqueue(economy, tank)) return;
+      if (this.rng() < 0.5 && this.tryEnqueue(economy, ranged)) return;
+      if (this.tryEnqueue(economy, melee)) return;
       return;
     }
 
     // 4. CHIẾN THUẬT FOCUS UPGRADE (ƯU TIÊN NÂNG CẤP ĐẦU TIÊN)
     if (this.strategy === 'FOCUS_UPGRADE') {
-      const myAliveCount = botUnits.filter((u) => u.isAlive).length;
-      // BẮT BUỘC giữ ít nhất 2 quân trên sân (1 Tank che chắn + 1 Melee/Ranged)
+      const myAliveCount = this.getAlive(botUnits).length;
       if (myAliveCount < 2) {
         const hasTank = botUnits.some((u) => u.isAlive && u.config.type === 'TANK');
-        if (!hasTank && economy.canAfford(tank.cost)) {
-          economy.enqueueUnit(tank);
-          return;
-        }
-        if (economy.canAfford(melee.cost)) {
-          economy.enqueueUnit(melee);
-          return;
-        }
+        if (!hasTank && this.tryEnqueue(economy, tank)) return;
+        if (this.tryEnqueue(economy, melee)) return;
       }
 
-      const isUnderThreat = alivePlayers.some(
-        (u) => fractionFromOwnBase(this.team, u.x) <= 0.35
-      );
-
-      // Nếu không bị đe dọa: nhịn tiền nếu sắp đủ mua nâng cấp tiếp theo
+      const isUnderThreat = this.isThreatened(alivePlayers, 0.35);
       if (!isUnderThreat && upgrades) {
         let minUpgradeCost: number | null = null;
         for (const t of ['MELEE', 'TANK', 'RANGED'] as const) {
@@ -408,7 +354,6 @@ export class BotAI {
             }
           }
         }
-        // Chỉ nhịn tiền khi đang gom dưới 180 vàng và thực sự có nâng cấp
         if (minUpgradeCost !== null && economy.gold < minUpgradeCost && economy.gold < 180) {
           return;
         }
@@ -417,12 +362,10 @@ export class BotAI {
 
     // 5. CHIẾN THUẬT BALANCED
     if (this.strategy === 'BALANCED') {
-      const myAlive = botUnits.filter((u) => u.isAlive).length;
-      const isUnderThreat = alivePlayers.some(
-        (u) => fractionFromOwnBase(this.team, u.x) <= 0.30
-      );
+      const myAlive = this.getAlive(botUnits).length;
+      const isUnderThreat = this.isThreatened(alivePlayers, 0.30);
       if (!isUnderThreat && myAlive >= 2 && economy.gold < 150) {
-        return; // Đang có quân giữ đường, gom tiền nâng cấp
+        return;
       }
     }
 
@@ -430,10 +373,9 @@ export class BotAI {
 
     if (this.difficulty === 'EASY') {
       // DỄ: Chọn ngẫu nhiên lính nào đủ tiền mua
-      const affordable = units.filter((u) => economy.canAfford(u.cost));
-      if (affordable.length > 0) {
-        chosenConfig = affordable[Math.floor(this.rng() * affordable.length)]!;
-        economy.enqueueUnit(chosenConfig);
+      const chosen = this.pickRandomAffordable(economy, units);
+      if (chosen) {
+        economy.enqueueUnit(chosen);
       }
       return;
     }
@@ -464,22 +406,14 @@ export class BotAI {
           chosenConfig = melee;
         }
       } else {
-        // Biến hóa ngẫu nhiên trong số lính đủ tiền mua
-        const affordable = units.filter((u) => economy.canAfford(u.cost));
-        if (affordable.length > 0) {
-          chosenConfig = affordable[Math.floor(this.rng() * affordable.length)]!;
+        const randomAffordable = this.pickRandomAffordable(economy, units);
+        if (randomAffordable) {
+          chosenConfig = randomAffordable;
         }
       }
 
-      if (economy.canAfford(chosenConfig.cost)) {
-        economy.enqueueUnit(chosenConfig);
-        // Nếu còn dư vàng và hàng đợi còn chỗ: tiếp tục mua thêm 1 quân hỗ trợ tạo đợt đẩy (wave push)
-        if (economy.spawnQueue.length < 2) {
-          const supportUnits = units.filter((u) => u.type !== 'TANK' && economy.canAfford(u.cost));
-          if (supportUnits.length > 0) {
-            economy.enqueueUnit(supportUnits[0]!);
-          }
-        }
+      if (this.tryEnqueue(economy, chosenConfig)) {
+        this.tryEnqueueSupportWave(economy, units);
       }
       return;
     }
@@ -521,15 +455,67 @@ export class BotAI {
       chosenConfig = special;
     }
 
-    if (economy.canAfford(chosenConfig.cost)) {
-      economy.enqueueUnit(chosenConfig);
-      // Hard: Wave push hiệu quả cao khi còn dư vàng
-      if (economy.spawnQueue.length < 2) {
-        const supportUnits = units.filter((u) => u.type !== 'TANK' && economy.canAfford(u.cost));
-        if (supportUnits.length > 0) {
-          economy.enqueueUnit(supportUnits[0]!);
-        }
+    if (this.tryEnqueue(economy, chosenConfig)) {
+      this.tryEnqueueSupportWave(economy, units);
+    }
+  }
+
+  // =========================================================================
+  // LOGIC HELPERS DÙNG CHUNG (DRY PATTERN)
+  // =========================================================================
+
+  /**
+   * Thử đưa một quân vào hàng đợi nếu đủ tiền và hàng đợi còn chỗ.
+   */
+  private tryEnqueue(economy: Economy, unit?: UnitConfig): boolean {
+    if (unit && economy.canAfford(unit.cost) && economy.spawnQueue.length < 3) {
+      economy.enqueueUnit(unit);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Đưa thêm 1 quân hỗ trợ tạo đợt đẩy (wave push) nếu còn dư vàng và slot.
+   */
+  private tryEnqueueSupportWave(economy: Economy, units: readonly UnitConfig[]): void {
+    if (economy.spawnQueue.length < 2) {
+      const supportUnits = units.filter((u) => u.type !== 'TANK' && economy.canAfford(u.cost));
+      if (supportUnits.length > 0) {
+        economy.enqueueUnit(supportUnits[0]!);
       }
     }
+  }
+
+  /**
+   * Chọn ngẫu nhiên một đơn vị lính đủ tiền mua.
+   */
+  private pickRandomAffordable(economy: Economy, units: readonly UnitConfig[]): UnitConfig | null {
+    const affordable = units.filter((u) => economy.canAfford(u.cost));
+    if (affordable.length === 0) return null;
+    return affordable[Math.floor(this.rng() * affordable.length)] ?? null;
+  }
+
+  /**
+   * Kiểm tra xem căn cứ có đang bị đe dọa trong ngưỡng cự ly cho trước hay không.
+   */
+  private isThreatened(enemies: readonly Unit[], distanceThresholdFraction: number): boolean {
+    return enemies.some(
+      (u) => u.isAlive && fractionFromOwnBase(this.team, u.x) <= distanceThresholdFraction
+    );
+  }
+
+  /**
+   * Lấy danh sách quân còn sống.
+   */
+  private getAlive(units: readonly Unit[]): Unit[] {
+    return units.filter((u) => u.isAlive);
+  }
+
+  /**
+   * Lấy danh sách quân đang đẩy qua sân đối phương vượt quá ngưỡng cự ly.
+   */
+  private getPushing(units: readonly Unit[], distanceThresholdFraction: number): Unit[] {
+    return units.filter((u) => u.isAlive && fractionFromOwnBase(this.team, u.x) > distanceThresholdFraction);
   }
 }

@@ -10,6 +10,7 @@ import type { Logger } from '../../config/logger';
 import type { EventEngine } from '../../engine/event-engine';
 import { AuthorizationPolicy } from '../../security/policies/authorization.policy';
 import type { RateLimiter } from '../../security/rate-limiter';
+import { parseSocketPayload } from './controller-utils';
 
 export interface OverlaySocketControllerOptions {
   engine: EventEngine;
@@ -48,50 +49,35 @@ export class OverlaySocketController {
         return;
       }
 
-      // 3. Phân phối sự kiện và validate qua Zod Schema
+      // 3. Phân phối sự kiện và validate qua Zod Schema (DRY pattern)
       if (eventName === 'overlay:telemetry') {
-        const parsed = OverlayTelemetryPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-        this.options.engine.setOverlayReady(parsed.data.readyToPlay);
+        const payload = parseSocketPayload(OverlayTelemetryPayloadSchema, args[0], ack);
+        if (!payload) return;
+        this.options.engine.setOverlayReady(payload.readyToPlay);
         if (ack) ack({ ok: true });
         this.notifyState();
       } else if (eventName === 'overlay:execution_started') {
-        const parsed = OverlayExecutionStartedPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-        this.options.engine.handleExecutionStarted(parsed.data);
+        const payload = parseSocketPayload(OverlayExecutionStartedPayloadSchema, args[0], ack);
+        if (!payload) return;
+        this.options.engine.handleExecutionStarted(payload);
         if (ack) ack({ ok: true });
         this.notifyState();
       } else if (eventName === 'overlay:execution_completed') {
-        const parsed = OverlayExecutionCompletedPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-        this.options.engine.handleExecutionCompleted(parsed.data);
+        const payload = parseSocketPayload(OverlayExecutionCompletedPayloadSchema, args[0], ack);
+        if (!payload) return;
+        this.options.engine.handleExecutionCompleted(payload);
         if (ack) ack({ ok: true });
         this.notifyState();
       } else if (eventName === 'overlay:execution_failed') {
-        const parsed = OverlayExecutionFailedPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-        this.options.engine.handleExecutionFailed(parsed.data);
+        const payload = parseSocketPayload(OverlayExecutionFailedPayloadSchema, args[0], ack);
+        if (!payload) return;
+        this.options.engine.handleExecutionFailed(payload);
         if (ack) ack({ ok: true });
         this.notifyState();
       } else if (eventName === 'overlay:action_cancelled') {
-        const parsed = OverlayActionCancelledPayloadSchema.safeParse(args[0]);
-        if (!parsed.success) {
-          if (ack) ack({ ok: false, error: { code: 'VALIDATION_ERROR', message: parsed.error.message } });
-          return;
-        }
-        this.options.engine.handleActionCancelled(parsed.data.executionId);
+        const payload = parseSocketPayload(OverlayActionCancelledPayloadSchema, args[0], ack);
+        if (!payload) return;
+        this.options.engine.handleActionCancelled(payload.executionId);
         if (ack) ack({ ok: true });
         this.notifyState();
       }
