@@ -1,0 +1,98 @@
+{
+  "version": "3.0",
+  "name": "caveman",
+  "unitId": "stone_melee",
+  "format": "FORGE_3_0",
+  "meta": {
+    "app": "the-singularity-odyssey",
+    "version": "3.0",
+    "image": "/sprites/prehistoric/caveman_action_atlas.png",
+    "size": {
+      "w": 2048,
+      "h": 1024
+    }
+  },
+  "fallback": {
+    "cellSize": [
+      256,
+      256
+    ]
+  },
+  "frameCount": 32,
+  "anchor": {
+    "x": 0.5,
+    "y": 0.9
+  },
+  "hurtbox": {
+    "width": 64,
+    "height": 130,
+    "offsetX": 0,
+    "offsetY": -65
+  },
+  "hitbox": {
+    "width": 75,
+    "height": 120,
+    "range": 68
+  },
+  "clips": {
+    "idle": {
+      "name": "idle",
+      "startFrame": 0,
+      "frameCount": 4,
+      "fps": 8,
+      "loop": true
+    },
+    "walk": {
+      "name": "walk",
+      "startFrame": 8,
+      "frameCount": 8,
+      "fps": 12,
+      "loop": true,
+      "stridePx": 64
+    },
+    "attack": {
+      "name": "attack",
+      "startFrame": 16,
+      "frameCount": 8,
+      "fps": 12,
+      "loop": false,
+      "hitFrame": 2,
+      "events": [
+        {
+          "name": "hit",
+          "frame": 2,
+          "atMs": 166,
+          "type": "HIT_FRAME"
+        },
+        {
+          "name": "sound_swing",
+          "frame": 1,
+          "atMs": 83,
+          "type": "SOUND",
+          "sound": "melee_swing"
+        },
+        {
+          "name": "vfx_slash",
+          "frame": 2,
+          "atMs": 166,
+          "type": "VFX",
+          "vfx": "slash_spark"
+        }
+      ]
+    },
+    "hurt": {
+      "name": "hurt",
+      "startFrame": 24,
+      "frameCount": 3,
+      "fps": 12,
+      "loop": false
+    },
+    "die": {
+      "name": "die",
+      "startFrame": 27,
+      "frameCount": 5,
+      "fps": 10,
+      "loop": false
+    }
+  }
+}

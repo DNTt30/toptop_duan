@@ -71,6 +71,10 @@ export class Unit {
   public readonly deathDuration: number = 0.6;
   public recoilOffset: number = 0; // Giật lùi bằng code khi bị trúng đòn
 
+  public get hurtboxWidth(): number {
+    return this.spriteConfig?.hurtbox?.width ?? this.config.size.width;
+  }
+
   public get currentClip(): 'idle' | 'walk' | 'attack' | 'hurt' | 'die' {
     return this.anim.currentClip;
   }
@@ -387,7 +391,7 @@ export class Unit {
     if (targetUnit && targetUnit.isAlive) {
       edgeDistToTarget = Math.max(
         0,
-        Math.abs(targetUnit.x - this.x) - (this.config.size.width / 2 + targetUnit.config.size.width / 2)
+        Math.abs(targetUnit.x - this.x) - (this.hurtboxWidth / 2 + targetUnit.hurtboxWidth / 2)
       );
     }
 
@@ -485,7 +489,7 @@ export class Unit {
         // Khoảng cách từ mép thân lính đến mép thân địch
         const edgeDist = Math.max(
           0,
-          Math.abs(enemy.x - this.x) - (this.config.size.width / 2 + enemy.config.size.width / 2)
+          Math.abs(enemy.x - this.x) - (this.hurtboxWidth / 2 + enemy.hurtboxWidth / 2)
         );
         if (edgeDist < minEnemyDist) {
           minEnemyDist = edgeDist;

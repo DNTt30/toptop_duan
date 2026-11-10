@@ -1251,6 +1251,18 @@ export class GameRenderer {
         sprite.scale.set(scale * dir, scale);
         sprite.alpha = fadeAlpha;
 
+        // Procedural secondary motion: Nhún người & hơi nghiêng theo nhịp sải chân
+        let proceduralRot = 0;
+        let proceduralBobY = 0;
+        if (unit.currentClip === 'walk') {
+          proceduralRot = Math.sin(unit.walkAnimPhase * Math.PI) * 0.04 * dir;
+          proceduralBobY = -Math.abs(Math.sin(unit.walkAnimPhase * Math.PI)) * 3;
+        } else if (unit.currentClip === 'attack') {
+          proceduralRot = (unit.attackAnimProgress * 0.06) * dir;
+        }
+        sprite.rotation = proceduralRot;
+        sprite.position.set(finalX, actualY + proceduralBobY);
+
         // 4. Chi tiết bằng code: Nháy trắng khi trúng đòn
         if (unit.hurtFlashTimer > 0) {
           sprite.tint = 0xffe4e6;

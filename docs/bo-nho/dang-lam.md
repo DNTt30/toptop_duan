@@ -1,23 +1,25 @@
 # Giấy Nhớ Việc Đang Làm (dang-lam.md)
 
 ## 1. Trạng Thái Hiện Tại
-- **Module:** Áp dụng Chuẩn Kiến Trúc Doanh Nghiệp 6 Lớp (Enterprise Architecture Standards) vào Monorepo `toptop_duan`.
-- **Trạng thái:** **ĐANG TRIỂN KHAI (IN PROGRESS)**
-- **Mục tiêu:**
-  1. Kiến trúc Thin Controller (< 100 dòng, Service tách biệt, Repository độc lập).
-  2. Phân quyền tập trung Single Source of Truth (Policy tập trung, cấm if-else role rải rác).
-  3. Tính toàn vẹn Transaction & Tính bất biến Append-only (better-sqlite3 transaction, không sửa/xóa audit log).
-  4. Đa ngôn ngữ i18n (Tách toàn bộ text hardcode ra dictionary JSON).
-  5. Kỷ luật Git (Lịch sử sạch, scope chuẩn, atomic commits).
-  6. Tư duy bàn giao Eval Mindset (Typecheck + Tests + Grep Proof = 0).
+- **Module:** Nâng Cấp Hệ Thống Animation & Combat Đồ Họa Đỉnh Cao (Theo Chuẩn Age of War).
+- **Trạng thái:** **HOÀN THÀNH NHÂN VẬT MẪU CAVEMAN (PHASE 1 - 4 DONE)**
+- **Thành quả cốt lõi:**
+  1. **Giải quyết dứt điểm lỗi Turnaround:** Tạo Sprite Sheet Action Frames thật 100% cho Caveman (`caveman_action_atlas.png`, 24 frames chân thật: Idle thở, Walk sải bước chân, Attack vung bổ chùy dộng đất + Slash Arc, Hurt giật nảy, Die ngã sõng soài).
+  2. **State Machine FSM Priority:** Chuyển sang bảng độ ưu tiên số tường minh (`DIE: 100`, `HURT: 80`, `ATTACK: 60`, `WALK: 40`, `IDLE: 10`), bảo vệ clip đánh không bị ngắt, hàng đợi chuyển trạng thái mượt.
+  3. **Tách biệt Hurtbox vs Hitbox:** Đo cự ly vật lý bằng `hurtbox.width` độc lập với kích thước canvas atlas, triệt tiêu lỗi đánh trúng không khí.
+  4. **Animation Event System:** Quét event `HIT_FRAME`, `SOUND`, `VFX`, hit-stop 0.045s (~3 ticks 60Hz) tạo cảm giác đòn đánh lực và nặng.
+  5. **Procedural Secondary Motion:** Tích hợp chuyển động cơ thể nhún nhảy `proceduralBobY` và lắc góc `proceduralRot` theo nhịp sải chân bám đất trong `Renderer.ts`.
+  6. **Eval Test:** 56/56 unit test PASS 100% (51 tests cũ + 5 tests mới AN-001..AN-005), Monorepo typecheck sạch 100%.
 
-## 2. Tiến Độ Các Bước
-- [x] **Bước 1 (Quy chuẩn):** Ban hành tài liệu [docs/architecture-standards.md](file:///d:/toptop_duan/docs/architecture-standards.md) và tích hợp vào [docs/AGENTS.md](file:///d:/toptop_duan/docs/AGENTS.md).
-- [x] **Bước 2 (Phân quyền tập trung):** Xây dựng `AuthorizationPolicy` tại `apps/backend/src/security/policies/authorization.policy.ts` (10/10 tests PASS).
-- [x] **Bước 3 (Bảo vệ tính toàn vẹn & Append-only):** Viết test `tests/integration/audit-immutability.test.ts` kiểm chứng Grep Proof = 0 câu lệnh DELETE trên bảng audit, rollback 100% khi lỗi (3/3 tests PASS).
-- [x] **Bước 4 (Tách Thin Controller & Tối ưu DRY):** Bóc tách `buddha-server.ts` từ 888 dòng thành 5 Thin Controller chuyên biệt (`http.controller.ts`, `pairing-http.controller.ts`, `static-asset.controller.ts`, `manager-socket.controller.ts`, `overlay-socket.controller.ts`). Tạo `controller-utils.ts` gom các logic lặp (`sendJson`, `sendJsonError`, `readJsonBody`, `parseSocketPayload`), và tinh giản các pattern lặp trong `BotAI.ts` (`tryEnqueue`, `isThreatened`, `getAlive`). Toàn bộ typecheck và tests PASS 100%.
-- [ ] **Bước 5 (Chuẩn hóa i18n):** Gom chuỗi thông báo và text UI vào từ điển ngôn ngữ.
-- [ ] **Bước 6 (Nghiệm thu Eval tổng thể):** Typecheck toàn monorepo và chạy test E2E.
+---
+
+## 2. Các Bước Kế Tiếp
+- [x] **Bước 1:** Tích hợp Sprite Sheet Caveman có đầy đủ Action Frames (`apps/game/scripts/generate_caveman_action_sheet.py`).
+- [x] **Bước 2:** Xây dựng AnimationController trên PixiJS v8 (`apps/game/src/engine/AnimationController.ts`).
+- [x] **Bước 3:** Đồng bộ Attack Frame với Combat Event (`apps/game/src/engine/Unit.ts`).
+- [x] **Bước 4:** Bổ sung procedural weapon rotation và body motion (`apps/game/src/engine/Renderer.ts`).
+- [ ] **Bước 5:** Kiểm thử giao chiến 2 đội quân Caveman trên chiến tuyến và tinh chỉnh visual.
+- [ ] **Bước 6:** Chuẩn hóa thành template mở rộng sang Knight, Archer và toàn bộ 24 đơn vị quân.
 
 ---
 
