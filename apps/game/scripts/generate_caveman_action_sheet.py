@@ -84,31 +84,28 @@ PIVOT_W1 = (35.0, 79.0)
 PIVOT_W2 = (30.4, 79.0)
 PIVOT_W3 = (36.1, 80.0)
 PIVOT_A1 = (46.7, 96.0)
-PIVOT_A2 = (38.1, 89.0)
+PIVOT_A2 = (35.0, 90.0)
 PIVOT_A3 = (37.2, 87.0)
 
-# Tách A2_coil & ghép chân trụ W0 vào
+# Tách sạch tia chém vàng khỏi A2 mà vẫn giữ nguyên nắm đấm phải (x<=60) và cặp chân tấn thật của A2
 a2_r, a2_g, a2_b = A2_BASE[:, :, 0].astype(int), A2_BASE[:, :, 1].astype(int), A2_BASE[:, :, 2].astype(int)
 yy2, xx2 = np.mgrid[0:A2_BASE.shape[0], 0:A2_BASE.shape[1]]
-body_right_x = np.where(yy2 < 18, 46, np.where(yy2 < 68, 56, 51))
 is_a2_wave = (
-    (xx2 > body_right_x)
+    ((xx2 > 61) & (yy2 <= 60))
+    | ((xx2 > 54) & (yy2 > 60))
     | ((xx2 >= 42) & (yy2 < 22) & (a2_r > 165) & (a2_g > 125))
-    | ((xx2 >= 38) & (yy2 >= 80) & (a2_r > 175) & (a2_g > 135))
+    | ((xx2 >= 45) & (yy2 >= 76) & (a2_r > 170) & (a2_g > 130) & ((a2_r - a2_b) > 35))
+    | ((xx2 >= 38) & (yy2 >= 86))
 )
 A2_coil_raw = A2_BASE.copy()
 A2_coil_raw[is_a2_wave, 3] = 0
-
-a2_canvas = Image.new('RGBA', (101, 91), (0, 0, 0, 0))
-w0_legs = W0_BASE.copy()
-w0_legs[:43, :, 3] = 0
-w0_legs[:56, :24, 3] = 0
-w0_legs[:58, 46:, 3] = 0
-a2_canvas.alpha_composite(Image.fromarray(w0_legs), (0, 9))
-a2_upper = A2_coil_raw.copy()
-a2_upper[56:, :, 3] = 0
-a2_canvas.alpha_composite(Image.fromarray(a2_upper), (0, 0))
-A2_COIL_BASE = np.array(a2_canvas)
+labeled_a2, n_a2 = ndimage.label(A2_coil_raw[:, :, 3] > 20)
+if n_a2 > 0:
+    a2_sizes = np.bincount(labeled_a2.ravel())
+    a2_sizes[0] = 0
+    main_a2 = int(np.argmax(a2_sizes))
+    A2_coil_raw[labeled_a2 != main_a2, 3] = 0
+A2_COIL_BASE = A2_coil_raw
 
 # Tách A3 thành A3_clean & A3_with_wave & A3_faded_slash
 a3_r, a3_g, a3_b = A3_BASE[:, :, 0].astype(int), A3_BASE[:, :, 1].astype(int), A3_BASE[:, :, 2].astype(int)
@@ -125,10 +122,16 @@ A3_CLEAN_BASE[~keep_a3, 3] = 0
 
 A2_wave = A2_BASE.copy()
 A2_wave[~is_a2_wave, 3] = 0
+wave_crop = A2_wave[:, 52:, :].copy()
+labeled_wave, n_wave = ndimage.label(wave_crop[:, :, 3] > 20)
+if n_wave > 0:
+    wave_sizes = np.bincount(labeled_wave.ravel())
+    for sl in range(1, n_wave + 1):
+        if wave_sizes[sl] < 12:
+            wave_crop[labeled_wave == sl, 3] = 0
 A3_impact = np.zeros((94, 108, 4), dtype=np.uint8)
 p_im = Image.fromarray(A3_impact)
 p_im.alpha_composite(Image.fromarray(A3_CLEAN_BASE), (0, 4))
-wave_crop = A2_wave[:, 52:, :].copy()
 p_im.alpha_composite(Image.fromarray(wave_crop), (52, 2))
 A3_WAVE_BASE = np.array(p_im)
 PIVOT_A3_WAVE = (PIVOT_A3[0], PIVOT_A3[1] + 4.0)
@@ -136,12 +139,6 @@ PIVOT_A3_WAVE = (PIVOT_A3[0], PIVOT_A3[1] + 4.0)
 A3_FADED_BASE = A3_BASE.copy()
 slash_only = ~keep_a3
 A3_FADED_BASE[slash_only, 3] = (A3_FADED_BASE[slash_only, 3].astype(np.float32) * 0.42).astype(np.uint8)
-
-# Tách riêng cây chùy gai gỗ (A1_club)
-A1_club = A1_BASE[:50, :44].copy()
-yy1, xx1 = np.mgrid[0:50, 0:44]
-A1_club[(xx1 > 20) & (yy1 > 32), 3] = 0
-A1_club_im = Image.fromarray(A1_club)
 
 
 TEAM_PALETTES = {
@@ -226,36 +223,124 @@ def paint_team_accents(sprite_arr, brow_arc, loin_box, cuff_boxes, team_key):
     return np.array(im)
 
 
+def extract_a1_upper(a1_arr):
+    """
+    Tách phần thân trên của A1 (đầu có băng đô, râu, ngực, 2 cánh tay hoàn chỉnh + tay cầm chùy gai)
+    tại điểm neo thắt lưng để ghép liền mạch lên cặp chân đang chạy W0..W3 (không còn tay thứ 3 hay chùy bay).
+    """
+    arr = a1_arr.copy()
+    h, w, _ = arr.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    keep = (yy <= 65) | ((xx >= 56) & (yy <= 80))
+    arr[~keep, 3] = 0
+    labeled, n = ndimage.label(arr[:, :, 3] > 20)
+    if n > 0:
+        sizes = np.bincount(labeled.ravel())
+        sizes[0] = 0
+        main_label = int(np.argmax(sizes))
+        arr[labeled != main_label, 3] = 0
+    return arr, (40.0, 64.0)
+
+
+WALK_LOWER_WAIST = {
+    'W0': (30.5, 48.0),
+    'W1': (27.5, 48.0),
+    'W2': (25.5, 47.0),
+    'W3': (29.0, 48.0),
+}
+
+
+def extract_walk_lower(walk_arr, pose_name):
+    """
+    Tách thắt lưng + khố màu phe + cặp chân đang sải bước từ W0..W3,
+    loại bỏ hoàn toàn 2 tay không vũ khí cũ của dáng chạy tay không.
+    """
+    arr = walk_arr.copy()
+    h, w, _ = arr.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    if pose_name == 'W0':
+        keep = (yy >= 46) & ~((xx <= 15) & (yy <= 58)) & ~((xx >= 46) & (yy <= 58))
+    elif pose_name == 'W1':
+        keep = (yy >= 46) & ~((xx <= 14) & (yy <= 57)) & ~((xx >= 44) & (yy <= 57))
+    elif pose_name == 'W2':
+        keep = (yy >= 46) & ~((xx <= 13) & (yy <= 58)) & ~((xx >= 42) & (yy <= 55))
+    else:
+        keep = (yy >= 47) & ~((xx >= 44) & (yy <= 51))
+    arr[~keep, 3] = 0
+    labeled, n = ndimage.label(arr[:, :, 3] > 20)
+    if n > 0:
+        for lbl in range(1, n + 1):
+            comp = labeled == lbl
+            area = int(np.sum(comp))
+            max_y = int(np.where(comp)[0].max())
+            if area < 40 or max_y < 60:
+                arr[comp, 3] = 0
+    return arr, WALK_LOWER_WAIST[pose_name]
+
+
 def build_team_poses(team_key):
     w0 = paint_team_accents(W0_BASE, (27, 7, 48, 2), (22, 48, 52, 63), [], team_key)
     w1 = paint_team_accents(W1_BASE, (24, 6, 44, 2), (20, 48, 49, 62), [], team_key)
     w2 = paint_team_accents(W2_BASE, (20, 6, 40, 2), (17, 47, 45, 62), [], team_key)
     w3 = paint_team_accents(W3_BASE, (25, 7, 46, 2), (20, 48, 49, 63), [], team_key)
-    a1 = paint_team_accents(A1_BASE, (34, 18, 55, 2), (29, 65, 62, 83), [], team_key)
-    a2_coil = paint_team_accents(A2_COIL_BASE, (26, 13, 47, 2), (25, 57, 54, 72), [], team_key)
-    a3_base = paint_team_accents(A3_BASE, (27, 19, 48, 2), (21, 52, 51, 69), [], team_key)
-    a3_clean = paint_team_accents(A3_CLEAN_BASE, (27, 19, 48, 2), (21, 52, 51, 69), [], team_key)
-    a3_wave = paint_team_accents(A3_WAVE_BASE, (27, 19, 48, 2), (21, 56, 51, 73), [], team_key)
-    a3_faded = paint_team_accents(A3_FADED_BASE, (27, 19, 48, 2), (21, 52, 51, 69), [], team_key)
+    a1 = paint_team_accents(A1_BASE, (43, 33, 62, 2), (29, 65, 62, 83), [], team_key)
+    a1_upper, a1_waist_xy = extract_a1_upper(a1)
+    a2_coil = paint_team_accents(A2_COIL_BASE, (37, 22, 54, 2), (17, 57, 46, 72), [], team_key)
+    a3_base = paint_team_accents(A3_BASE, (35, 22, 53, 2), (21, 52, 51, 69), [], team_key)
+    a3_clean = paint_team_accents(A3_CLEAN_BASE, (35, 22, 53, 2), (21, 52, 51, 69), [], team_key)
+    a3_wave = paint_team_accents(A3_WAVE_BASE, (35, 22, 53, 2), (21, 56, 51, 73), [], team_key)
+    a3_faded = paint_team_accents(A3_FADED_BASE, (35, 22, 53, 2), (21, 52, 51, 69), [], team_key)
     return {
         'W0': w0, 'W1': w1, 'W2': w2, 'W3': w3,
-        'A1': a1, 'A2_coil': a2_coil,
+        'A1': a1, 'A1_upper': a1_upper, 'A1_waist_xy': a1_waist_xy,
+        'A2_coil': a2_coil,
         'A3': a3_base, 'A3_clean': a3_clean, 'A3_with_wave': a3_wave, 'A3_faded': a3_faded,
     }
 
 
-def make_armed_walk(walk_arr, pivot_xy, club_angle_deg, shoulder_dx=-30, shoulder_dy=-53):
-    base_im = Image.fromarray(walk_arr)
-    canvas = Image.new('RGBA', (144, 136), (0, 0, 0, 0))
-    target_px, target_py = 72.0, 118.0
-    bx = int(round(target_px - pivot_xy[0]))
-    by = int(round(target_py - pivot_xy[1]))
+def make_armed_walk(
+    walk_arr,
+    walk_pivot,
+    pose_name,
+    a1_upper_arr,
+    a1_waist_xy,
+    upper_lean_deg,
+    torso_dx=0.0,
+    torso_dy=0.0,
+    upper_scale=0.93,
+):
+    lower_arr, lower_waist_xy = extract_walk_lower(walk_arr, pose_name)
+    lower_im = Image.fromarray(lower_arr)
 
-    rot_club = A1_club_im.rotate(club_angle_deg, resample=Image.BICUBIC, expand=True)
-    cx = int(round(target_px + shoulder_dx - rot_club.width // 2))
-    cy = int(round(target_py + shoulder_dy - rot_club.height + 10))
-    canvas.alpha_composite(rot_club, (cx, cy))
-    canvas.alpha_composite(base_im, (bx, by))
+    canvas = Image.new('RGBA', (160, 148), (0, 0, 0, 0))
+    target_px, target_py = 80.0, 132.0
+    lower_x = int(round(target_px - walk_pivot[0]))
+    lower_y = int(round(target_py - walk_pivot[1]))
+    waist_x = lower_x + lower_waist_xy[0]
+    waist_y = lower_y + lower_waist_xy[1]
+
+    upper_im = Image.fromarray(a1_upper_arr)
+    uw = max(1, int(round(upper_im.width * upper_scale)))
+    uh = max(1, int(round(upper_im.height * upper_scale)))
+    upper_im = upper_im.resize((uw, uh), resample=Image.BICUBIC)
+    ux = a1_waist_xy[0] * upper_scale
+    uy = a1_waist_xy[1] * upper_scale
+
+    if abs(upper_lean_deg) > 0.05:
+        cx0, cy0 = uw / 2.0, uh / 2.0
+        upper_rot = upper_im.rotate(upper_lean_deg, resample=Image.BICUBIC, expand=True)
+        cx1, cy1 = upper_rot.width / 2.0, upper_rot.height / 2.0
+        rad = -math.radians(upper_lean_deg)
+        dx, dy = ux - cx0, uy - cy0
+        ux = cx1 + dx * math.cos(rad) - dy * math.sin(rad)
+        uy = cy1 + dx * math.sin(rad) + dy * math.cos(rad)
+        upper_im = upper_rot
+
+    paste_ux = int(round((waist_x + torso_dx) - ux))
+    paste_uy = int(round((waist_y + torso_dy + 1.5) - uy))
+    # Vẽ phần thân trên trước rồi ghép đai khố + chân lên trên để mép thắt lưng ôm liền tự nhiên
+    canvas.alpha_composite(upper_im, (paste_ux, paste_uy))
+    canvas.alpha_composite(lower_im, (lower_x, lower_y))
     return np.array(canvas), (target_px, target_py)
 
 
@@ -388,19 +473,29 @@ def generate_atlas_for_team(team_key):
             scale=sc, rot_deg=r_deg, squash_x=sx, squash_y=sy, offset_x=ox, offset_y=oy, rim_rgb=rim_rgb,
         )
 
-    # HÀNG 1: WALK (8 frames 8..15)
+    # HÀNG 1: WALK (8 frames 8..15) — Thân trên cầm chùy A1 ghép liền thắt lưng lên chân chạy W0..W3
     walk_specs = [
-        (poses['W0'], PIVOT_W0, +6,  -30, -53,  0.0, 1.00, 1.00, 0.0,  0.0),
-        (poses['W1'], PIVOT_W1, +10, -30, -52, -0.8, 1.01, 0.99, 0.0,  0.0),
-        (poses['W2'], PIVOT_W2, +5,  -30, -53,  0.0, 1.00, 1.00, 0.0, -1.0),
-        (poses['W3'], PIVOT_W3, +2,  -29, -54, +0.8, 0.99, 1.01, 0.0, -1.0),
-        (poses['W0'], PIVOT_W0, +7,  -30, -53,  0.0, 1.00, 1.00, 0.0,  0.0),
-        (poses['W1'], PIVOT_W1, +11, -30, -52, -0.8, 1.01, 0.99, 0.0,  0.0),
-        (poses['W2'], PIVOT_W2, +4,  -30, -53,  0.0, 1.00, 1.00, 0.0, -1.0),
-        (poses['W3'], PIVOT_W3, +1,  -29, -54, +0.8, 0.99, 1.01, 0.0, -1.0),
+        # (pose_name, walk_pivot, lean_deg, torso_dx, torso_dy, r_deg, sx, sy, ox, oy)
+        ('W0', PIVOT_W0, -5.0, +0.5,  0.0,  0.0, 1.00, 1.00, 0.0,  0.0),
+        ('W1', PIVOT_W1, -7.5, +1.5, +1.5, -0.8, 1.01, 0.99, 0.0,  0.0),
+        ('W2', PIVOT_W2, -6.0, +1.0, -0.5,  0.0, 1.00, 1.00, 0.0, -1.0),
+        ('W3', PIVOT_W3, -3.5,  0.0, -2.0, +0.8, 0.99, 1.01, 0.0, -1.0),
+        ('W0', PIVOT_W0, -5.8, +0.8, +0.3,  0.0, 1.00, 1.00, 0.0,  0.0),
+        ('W1', PIVOT_W1, -8.2, +1.8, +1.8, -0.8, 1.01, 0.99, 0.0,  0.0),
+        ('W2', PIVOT_W2, -5.2, +0.8, -0.8,  0.0, 1.00, 1.00, 0.0, -1.0),
+        ('W3', PIVOT_W3, -3.0, -0.2, -2.2, +0.8, 0.99, 1.01, 0.0, -1.0),
     ]
-    for idx, (ws, piv, c_ang, sdx, sdy, r_deg, sx, sy, ox, oy) in enumerate(walk_specs):
-        armed, armed_piv = make_armed_walk(ws, piv, club_angle_deg=c_ang, shoulder_dx=sdx, shoulder_dy=sdy)
+    for idx, (pose_name, piv, lean_deg, tdx, tdy, r_deg, sx, sy, ox, oy) in enumerate(walk_specs):
+        armed, armed_piv = make_armed_walk(
+            poses[pose_name],
+            piv,
+            pose_name=pose_name,
+            a1_upper_arr=poses['A1_upper'],
+            a1_waist_xy=poses['A1_waist_xy'],
+            upper_lean_deg=lean_deg,
+            torso_dx=tdx,
+            torso_dy=tdy,
+        )
         place_in_cell_anchored(
             atlas, col=idx, row=1, sprite_arr=armed, pivot_xy=armed_piv,
             scale=SCALE_WALK, rot_deg=r_deg, squash_x=sx, squash_y=sy, offset_x=ox, offset_y=oy, rim_rgb=rim_rgb,

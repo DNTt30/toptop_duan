@@ -4,12 +4,13 @@
   "unitId": "stone_special",
   "format": "FORGE_3_0",
   "meta": {
-    "app": "agent-sprite-forge",
+    "app": "the-singularity-odyssey",
     "version": "3.0",
-    "image": "/sprites/prehistoric/shaman_atlas.png",
+    "image": "/sprites/prehistoric/shaman_action_atlas.png",
+    "redImage": "/sprites/prehistoric/shaman_action_atlas_red.png",
     "size": {
-      "w": 1536,
-      "h": 1024
+      "w": 2048,
+      "h": 1280
     }
   },
   "fallback": {
@@ -18,60 +19,78 @@
       256
     ]
   },
-  "frameCount": 24,
+  "frameCount": 36,
   "anchor": {
     "x": 0.5,
     "y": 0.9
   },
+  "hurtbox": {
+    "width": 60,
+    "height": 132,
+    "offsetX": 0,
+    "offsetY": -66
+  },
   "hitbox": {
     "x": -35,
-    "y": -190,
+    "y": -180,
     "width": 70,
-    "height": 190
+    "height": 180
   },
   "clips": {
     "idle": {
       "name": "idle",
       "startFrame": 0,
-      "frameCount": 4,
-      "fps": 8,
+      "frameCount": 8,
+      "fps": 10,
       "loop": true
     },
     "walk": {
       "name": "walk",
-      "startFrame": 6,
-      "frameCount": 4,
-      "fps": 10,
+      "startFrame": 8,
+      "frameCount": 8,
+      "fps": 12,
       "loop": true,
       "stridePx": 64
     },
     "attack": {
       "name": "attack",
-      "startFrame": 12,
-      "frameCount": 3,
-      "fps": 10,
+      "startFrame": 16,
+      "frameCount": 8,
+      "fps": 16,
       "loop": false,
-      "hitFrame": 1,
+      "hitFrame": 3,
+      "durationsMs": [
+        35,
+        35,
+        35,
+        45,
+        45,
+        60,
+        60,
+        60
+      ],
       "events": [
         {
           "name": "hit",
-          "frame": 1,
-          "atMs": 100
+          "frame": 3,
+          "atMs": 105,
+          "type": "HIT_FRAME"
         }
-      ]
+      ],
+      "releaseFrame": 3
     },
     "hurt": {
       "name": "hurt",
-      "startFrame": 18,
-      "frameCount": 2,
-      "fps": 8,
+      "startFrame": 24,
+      "frameCount": 3,
+      "fps": 12,
       "loop": false
     },
     "die": {
       "name": "die",
-      "startFrame": 20,
-      "frameCount": 2,
-      "fps": 8,
+      "startFrame": 27,
+      "frameCount": 9,
+      "fps": 14,
       "loop": false
     }
   }

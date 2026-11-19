@@ -2,7 +2,7 @@
 
 ## 1. Trạng Thái Hiện Tại
 - **Module:** Nâng Cấp Hệ Thống Animation, Game Feel & Hiệu Năng 60Hz Vòng 2 (`A -> B -> C -> D -> E` trên Caveman `stone_melee`).
-- **Trạng thái:** **HOÀN THÀNH & NGHIỆM THU VÒNG 2 (EVAL 12/12 FILES, 69/69 TESTS PASS, BUILD 1.11s, 0 LỖI PLAYWRIGHT)**
+- **Trạng thái:** **HOÀN THÀNH & NGHIỆM THU VÒNG 2 + FIX SPRITE WALK CAVEMAN (EVAL 12/12 FILES, 69/69 TESTS PASS, BUILD 709ms, 0 LỖI PLAYWRIGHT)**
 - **Thành quả cốt lõi Vòng 2 (`A -> B -> C -> D -> E`):**
   1. **A — Chẩn đoán & Tối ưu Ngoài Canvas (`GameLoop.ts`, `World.ts`, `Renderer.ts`, `HUD.tsx`, `App.tsx`):**
      - Mở rộng bảng F3 (`logicTimeMs`, `renderTimeMs`, `hudDomTimeMs`, `domTouchesPerFrame`, `gcPauseMs`, `simSteps`, `droppedSteps`).
@@ -12,7 +12,10 @@
   3. **C — VFX khi chạm đòn 3 mức (`ParticleSystem.ts`, `World.ts`, `combatFeelConfig.ts`):** Thang `NORMAL` (55ms hit-stop, cung 60–80ms scale `0.95`, 6–7 tia lửa) / `HEAVY` (chu kỳ mỗi 3 đòn hoặc crit/tank, 85ms hit-stop, cung 85–115ms scale `1.32`, 8–10 tia lửa + GLOW, rung `2.5px`) / `KILL` (95ms hit-stop, cung 100–125ms scale `1.52`, 9–10 tia lửa + GLOW, rung `3.0px`); 3 biến thể xoay `±15°`, additive blending tại điểm chạm vũ khí.
   4. **D — Đám đông dễ đọc (`Unit.ts`, `Renderer.ts`, `combatFeelConfig.ts`):** Separation tối thiểu `74px` / thị giác `98px`, lệch trục Y `±6px`, Y-sort theo chân thực, khóa tiền tuyến không đan xen 2 phe (kèm `overlapGuard` bỏ qua địch đã tụt lại phía sau), hiện thanh máu cho toàn bộ đơn vị đang `ATTACK`, giảm sáng `~8%` (`0xebebeb`) cho quân phía sau không giao tranh.
   5. **E — Dọn nhiễu & Phần thưởng (`Renderer.ts`, `ParticleSystem.ts`, `HUD.tsx`):** Mũi tên xanh pulse chỉ hiển thị ở đơn vị P1, pool xu vàng + XP orb giới hạn `40` hạt với tự động gộp xu (`mergedCount > 1` vẽ viền hào quang vàng) bay Bezier về HUD kèm pulse.
-  6. **Eval Verification:** `typecheck` 0 lỗi, `12/12` file Vitest (`69/69` tests) PASS (gồm sửa xong 2 case `[BUG-N01]` & `[BUG-N02]` và 7 tests mới trong `combatFeelUpgrade.test.ts`), `build` 1.11s, `productionLeak` PASS, Playwright quay video & benchmark (`ERRORS_COUNT: 0`).
+  6. **Fix Sprite WALK, ATK2 & Băng Đô (`generate_caveman_action_sheet.py`):**
+     - Bỏ cắt ghép bàn tay thứ 3 cầm chùy bay sau lưng (`make_armed_walk` cũ); dùng `extract_a1_upper` + `extract_walk_lower` ghép liền phần thân trên cầm chùy của `A1` tại đúng thắt lưng lên cặp chân sải bước `W0..W3`.
+     - Khôi phục cặp chân tấn thật + nắm đấm nguyên vẹn của `A2` (`A2_COIL_BASE`), xóa vết nổ vàng dưới chân trước (`PIVOT_A2 = (35.0, 90.0)`), chỉnh băng đô trán `A1/A2/A3` ôm sát tóc trên lông mày.
+  7. **Eval Verification:** `typecheck` 0 lỗi, `12/12` file Vitest (`69/69` tests) PASS (gồm 19/19 `bugHuntPipeline.test.ts` & 7/7 `combatFeelUpgrade.test.ts`), `build` 709ms, `productionLeak` 1/1 PASS, Playwright `record_caveman_demo.mjs` (`ERRORS_COUNT: 0`).
 
 ---
 
@@ -21,7 +24,8 @@
 - [x] **Bước 2:** Triển khai đầy đủ theo thứ tự `0 -> 2 -> 1 -> 3 -> 5 -> 7 -> 4 -> 6 -> 8 -> 9` (đã giữ nguyên 100% gameplay logic: sát thương, tốc độ nền, chi phí, đối xứng headless).
 - [x] **Bước 3:** Tối ưu render pipeline (`skySprite` 1-draw, panorama tile culling, HUD không blur, lazy preload theo kỷ nguyên) đạt `1.9–2.1 ms` JS render và `38 MB` VRAM.
 - [x] **Bước 4:** Kiểm thử toàn bộ (`typecheck`, `67/67` tests, `build`, `productionLeak`, Playwright + `read_file` ảnh chụp).
-- [ ] **Bước 5:** Chờ người dùng duyệt mẫu Caveman (`stone_melee`) để nhân rộng sang 3 đơn vị còn lại của Thời Tiền Sử và các Kỷ Nguyên sau.
+- [x] **Bước 5 (Hoàn tất 4/4 quân Kỷ nguyên 1 Tiền Sử):** Tách thư viện lõi [`action_sheet_lib.py`](file:///d:/toptop_duan/apps/game/scripts/action_sheet_lib.py) (HSV team recolor giữ nguyên màu da, torso pivot chống giật ngang, outline + rim light, 36 khung chuẩn Blue/Red) và sinh trọn bộ 36 Action Frames cho **Hunter (`stone_ranged`)**, **Dino (`stone_tank` — ghép Dũng Sĩ áo choàng cầm giáo lên lưng Triceratops)** và **Shaman (`stone_special` — xóa bóng rời, đổi mão/khố xanh-đỏ)** qua [`generate_prehistoric_action_sheets.py`](file:///d:/toptop_duan/apps/game/scripts/generate_prehistoric_action_sheets.py). Đã tích hợp vào [`sprites.ts`](file:///d:/toptop_duan/apps/game/src/data/sprites.ts), pass `typecheck` và `69/69` unit tests.
+- [ ] **Bước 6:** Nhân rộng tiếp sang Kỷ nguyên 2 Trung Cổ (`knight`, `archer`, `priest`, `cavalry`) bằng cùng thư viện `action_sheet_lib.py`.
 
 ---
 

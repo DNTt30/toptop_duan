@@ -202,185 +202,104 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
   },
 
   stone_ranged: {
-
     unitId: 'stone_ranged',
-
     name: 'Thợ Săn Ném Đá',
-
     age: 1,
-
-    atlasPath: '/sprites/prehistoric/hunter_atlas.png',
-
-    manifestPath: '/sprites/prehistoric/hunter_animation.json',
-
+    atlasPath: '/sprites/prehistoric/hunter_action_atlas.png',
+    redAtlasPath: '/sprites/prehistoric/hunter_action_atlas_red.png',
+    manifestPath: '/sprites/prehistoric/hunter_action_animation.json',
     format: 'FORGE_3_0',
-
     frameSize: { width: 256, height: 256 },
-
     anchor: { x: 0.5, y: 0.90 },
-
+    hurtbox: { width: 58, height: 125, offsetX: 0, offsetY: -62 },
     hitbox: { x: -30, y: -180, width: 60, height: 180 },
-
     stridePx: 60,
-
     targetHeight: 180,
-
     flying: false,
-
     clips: {
-
-      idle: { name: 'idle', startFrame: 0, frameCount: 4, fps: 8, loop: true },
-
-      walk: { name: 'walk', startFrame: 6, frameCount: 4, fps: 10, loop: true, stridePx: 60 },
-
+      idle: { name: 'idle', startFrame: 0, frameCount: 8, fps: 10, loop: true },
+      walk: { name: 'walk', startFrame: 8, frameCount: 8, fps: 12, loop: true, stridePx: 60 },
       attack: {
-
         name: 'attack',
-
-        startFrame: 12,
-
-        frameCount: 3,
-
-        fps: 12,
-
+        startFrame: 16,
+        frameCount: 8,
+        fps: 16,
         loop: false,
-
-        hitFrame: 1,
-
-        releaseFrame: 1,
-
-        events: [{ name: 'hit', frame: 1, atMs: 83 }],
-
+        hitFrame: CONFIG.attack.hitFrame,
+        releaseFrame: CONFIG.attack.hitFrame,
+        durationsMs: [...CONFIG.attack.frameDurationsMs],
+        events: [{ name: 'hit', frame: CONFIG.attack.hitFrame, atMs: CONFIG.attack.anticipationMs }],
       },
-
-      hurt: { name: 'hurt', startFrame: 18, frameCount: 2, fps: 8, loop: false },
-
-      die: { name: 'die', startFrame: 20, frameCount: 2, fps: 8, loop: false },
-
+      hurt: { name: 'hurt', startFrame: 24, frameCount: 3, fps: 12, loop: false },
+      die: { name: 'die', startFrame: 27, frameCount: CONFIG.death.animFrameCount, fps: CONFIG.death.animFps, loop: false },
     },
-
   },
-
   stone_tank: {
-
     unitId: 'stone_tank',
-
     name: 'Dũng Sĩ Cưỡi Khủng Long',
-
     age: 1,
-
-    atlasPath: '/sprites/prehistoric/dino_atlas.png',
-
-    manifestPath: '/sprites/prehistoric/dino_animation.json',
-
+    atlasPath: '/sprites/prehistoric/dino_action_atlas.png',
+    redAtlasPath: '/sprites/prehistoric/dino_action_atlas_red.png',
+    manifestPath: '/sprites/prehistoric/dino_action_animation.json',
     format: 'FORGE_3_0',
-
     frameSize: { width: 256, height: 256 },
-
     anchor: { x: 0.5, y: 0.90 },
-
+    hurtbox: { width: 98, height: 155, offsetX: 0, offsetY: -78 },
     hitbox: { x: -55, y: -210, width: 110, height: 210 },
-
     stridePx: 80,
-
     targetHeight: 220,
-
     flying: false,
-
     clips: {
-
-      idle: { name: 'idle', startFrame: 0, frameCount: 4, fps: 8, loop: true },
-
-      walk: { name: 'walk', startFrame: 6, frameCount: 3, fps: 10, loop: true, stridePx: 80 },
-
+      idle: { name: 'idle', startFrame: 0, frameCount: 8, fps: 10, loop: true },
+      walk: { name: 'walk', startFrame: 8, frameCount: 8, fps: 12, loop: true, stridePx: 80 },
       attack: {
-
         name: 'attack',
-
-        startFrame: 12,
-
-        frameCount: 3,
-
-        fps: 12,
-
+        startFrame: 16,
+        frameCount: 8,
+        fps: 16,
         loop: false,
-
-        hitFrame: 1,
-
-        events: [{ name: 'hit', frame: 1, atMs: 83 }],
-
+        hitFrame: CONFIG.attack.hitFrame,
+        durationsMs: [...CONFIG.attack.frameDurationsMs],
+        events: [{ name: 'hit', frame: CONFIG.attack.hitFrame, atMs: CONFIG.attack.anticipationMs }],
       },
-
-      hurt: { name: 'hurt', startFrame: 18, frameCount: 2, fps: 8, loop: false },
-
-      die: { name: 'die', startFrame: 20, frameCount: 2, fps: 8, loop: false },
-
+      hurt: { name: 'hurt', startFrame: 24, frameCount: 3, fps: 12, loop: false },
+      die: { name: 'die', startFrame: 27, frameCount: CONFIG.death.animFrameCount, fps: CONFIG.death.animFps, loop: false },
     },
-
   },
-
   stone_special: {
-
     unitId: 'stone_special',
-
     name: 'Thầy Mo Nguyên Thủy',
-
     age: 1,
-
-    atlasPath: '/sprites/prehistoric/shaman_atlas.png',
-
-    manifestPath: '/sprites/prehistoric/shaman_animation.json',
-
+    atlasPath: '/sprites/prehistoric/shaman_action_atlas.png',
+    redAtlasPath: '/sprites/prehistoric/shaman_action_atlas_red.png',
+    manifestPath: '/sprites/prehistoric/shaman_action_animation.json',
     format: 'FORGE_3_0',
-
     frameSize: { width: 256, height: 256 },
-
     anchor: { x: 0.5, y: 0.90 },
-
+    hurtbox: { width: 60, height: 132, offsetX: 0, offsetY: -66 },
     hitbox: { x: -35, y: -180, width: 70, height: 180 },
-
     stridePx: 64,
-
     targetHeight: 190,
-
     flying: false,
-
     clips: {
-
-      idle: { name: 'idle', startFrame: 0, frameCount: 4, fps: 8, loop: true },
-
-      walk: { name: 'walk', startFrame: 6, frameCount: 4, fps: 10, loop: true, stridePx: 64 },
-
+      idle: { name: 'idle', startFrame: 0, frameCount: 8, fps: 10, loop: true },
+      walk: { name: 'walk', startFrame: 8, frameCount: 8, fps: 12, loop: true, stridePx: 64 },
       attack: {
-
         name: 'attack',
-
-        startFrame: 12,
-
-        frameCount: 4,
-
-        fps: 12,
-
+        startFrame: 16,
+        frameCount: 8,
+        fps: 16,
         loop: false,
-
-        hitFrame: 1,
-
-        releaseFrame: 1,
-
-        events: [{ name: 'hit', frame: 1, atMs: 83 }],
-
+        hitFrame: CONFIG.attack.hitFrame,
+        releaseFrame: CONFIG.attack.hitFrame,
+        durationsMs: [...CONFIG.attack.frameDurationsMs],
+        events: [{ name: 'hit', frame: CONFIG.attack.hitFrame, atMs: CONFIG.attack.anticipationMs }],
       },
-
-      hurt: { name: 'hurt', startFrame: 18, frameCount: 2, fps: 8, loop: false },
-
-      die: { name: 'die', startFrame: 20, frameCount: 2, fps: 8, loop: false },
-
+      hurt: { name: 'hurt', startFrame: 24, frameCount: 3, fps: 12, loop: false },
+      die: { name: 'die', startFrame: 27, frameCount: CONFIG.death.animFrameCount, fps: CONFIG.death.animFps, loop: false },
     },
-
   },
-
   // ==========================================
-
   // KỶ NGUYÊN 2: TRUNG CỔ (MEDIEVAL)
 
   // ==========================================

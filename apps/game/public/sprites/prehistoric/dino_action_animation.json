@@ -1,0 +1,96 @@
+{
+  "version": "3.0",
+  "name": "dino",
+  "unitId": "stone_tank",
+  "format": "FORGE_3_0",
+  "meta": {
+    "app": "the-singularity-odyssey",
+    "version": "3.0",
+    "image": "/sprites/prehistoric/dino_action_atlas.png",
+    "redImage": "/sprites/prehistoric/dino_action_atlas_red.png",
+    "size": {
+      "w": 2048,
+      "h": 1280
+    }
+  },
+  "fallback": {
+    "cellSize": [
+      256,
+      256
+    ]
+  },
+  "frameCount": 36,
+  "anchor": {
+    "x": 0.5,
+    "y": 0.9
+  },
+  "hurtbox": {
+    "width": 98,
+    "height": 155,
+    "offsetX": 0,
+    "offsetY": -78
+  },
+  "hitbox": {
+    "x": -55,
+    "y": -210,
+    "width": 110,
+    "height": 210
+  },
+  "clips": {
+    "idle": {
+      "name": "idle",
+      "startFrame": 0,
+      "frameCount": 8,
+      "fps": 10,
+      "loop": true
+    },
+    "walk": {
+      "name": "walk",
+      "startFrame": 8,
+      "frameCount": 8,
+      "fps": 12,
+      "loop": true,
+      "stridePx": 80
+    },
+    "attack": {
+      "name": "attack",
+      "startFrame": 16,
+      "frameCount": 8,
+      "fps": 16,
+      "loop": false,
+      "hitFrame": 3,
+      "durationsMs": [
+        35,
+        35,
+        35,
+        45,
+        45,
+        60,
+        60,
+        60
+      ],
+      "events": [
+        {
+          "name": "hit",
+          "frame": 3,
+          "atMs": 105,
+          "type": "HIT_FRAME"
+        }
+      ]
+    },
+    "hurt": {
+      "name": "hurt",
+      "startFrame": 24,
+      "frameCount": 3,
+      "fps": 12,
+      "loop": false
+    },
+    "die": {
+      "name": "die",
+      "startFrame": 27,
+      "frameCount": 9,
+      "fps": 14,
+      "loop": false
+    }
+  }
+}
