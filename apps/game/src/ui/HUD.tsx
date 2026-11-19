@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AGES_DATA, type Team, type TurretConfig } from '../data/ages';
+import { CONFIG } from '../data/combatFeelConfig';
 import { UPGRADE_CONFIG } from '../data/upgrades';
 import { type ConnectionState, type NetworkRole, type NetworkSync } from '../engine/NetworkSync';
+import { particleSystem } from '../engine/ParticleSystem';
 import { type World, type WorldSnapshot } from '../engine/World';
 import { type LiveEventManager } from '../live/LiveEventSource';
 
@@ -22,7 +24,44 @@ interface HUDProps {
 
 export type MenuTab = 'TURRETS' | 'EVOLVE' | null;
 
-export const HUD: React.FC<HUDProps> = ({
+interface RadialCooldownOverlayProps {
+  remainingFrac: number;
+  size?: number;
+  fullCircle?: boolean;
+  color?: string;
+}
+
+const RadialCooldownOverlay: React.FC<RadialCooldownOverlayProps> = ({
+  remainingFrac,
+  size = CONFIG.hud.radialCooldownSizePx,
+  fullCircle = false,
+  color = '#38bdf8',
+}) => {
+  if (remainingFrac <= 0.005) return null;
+  const clamped = Math.min(1, Math.max(0, remainingFrac));
+  const deg = Math.round(clamped * 360);
+  return (
+    <div
+      data-testid="radial-cooldown-overlay"
+      style={{
+        position: 'absolute',
+        top: fullCircle ? 0 : '50%',
+        left: fullCircle ? 0 : '50%',
+        width: fullCircle ? '100%' : `${size}px`,
+        height: fullCircle ? '100%' : `${size}px`,
+        transform: fullCircle ? 'none' : 'translate(-50%, -50%)',
+        borderRadius: '50%',
+        background: `conic-gradient(rgba(15, 23, 42, 0.72) ${deg}deg, rgba(15, 23, 42, 0.12) ${deg}deg)`,
+        border: `2px solid ${color}`,
+        boxShadow: '0 0 8px rgba(0, 0, 0, 0.45)',
+        pointerEvents: 'none',
+        zIndex: 2,
+      }}
+    />
+  );
+};
+
+export const HUD: React.FC<HUDProps> = React.memo(({
   world,
   snapshot,
   networkSync,
@@ -36,6 +75,15 @@ export const HUD: React.FC<HUDProps> = ({
   const [showP2Turrets, setShowP2Turrets] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [goldPop, setGoldPop] = useState(false);
+  const [rightGoldPop, setRightGoldPop] = useState(false);
+  const [xpPop, setXpPop] = useState(false);
+  const [rightXpPop, setRightXpPop] = useState(false);
+  const pulseTimersRef = useRef<{
+    gold?: number;
+    rightGold?: number;
+    xp?: number;
+    rightXp?: number;
+  }>({});
 
   // Trạng thái mạng Online P2P
   const [netState, setNetState] = useState<ConnectionState>(networkSync?.connectionState || 'DISCONNECTED');
@@ -131,13 +179,50 @@ export const HUD: React.FC<HUDProps> = ({
   const canAddRightSlot = rightTurretSlotsCount < 3;
   const canAffordAddRightSlot = canAddRightSlot && snapshot.rightGold >= rightNextSlotCost;
 
+  // Hiệu ứng nhảy số vàng & orb XP bay chạm HUD (Bezíer arrive callback)
+  useEffect(() => {
+    const pulseMs = CONFIG.death.hudPulseMs;
+    const triggerPulse = (key: 'gold' | 'rightGold' | 'xp' | 'rightXp') => {
+      const prevTimer = pulseTimersRef.current[key];
+      if (prevTimer) window.clearTimeout(prevTimer);
+      if (key === 'gold') setGoldPop(true);
+      else if (key === 'rightGold') setRightGoldPop(true);
+      else if (key === 'xp') setXpPop(true);
+      else setRightXpPop(true);
+
+      pulseTimersRef.current[key] = window.setTimeout(() => {
+        if (key === 'gold') setGoldPop(false);
+        else if (key === 'rightGold') setRightGoldPop(false);
+        else if (key === 'xp') setXpPop(false);
+        else setRightXpPop(false);
+      }, pulseMs);
+    };
+
+    const unsub = particleSystem.subscribeRewardArrive((team, kind) => {
+      if (team === 'LEFT') {
+        triggerPulse(kind === 'GOLD' ? 'gold' : 'xp');
+      } else {
+        triggerPulse(kind === 'GOLD' ? 'rightGold' : 'rightXp');
+      }
+    });
+
+    return () => {
+      unsub();
+      const timers = pulseTimersRef.current;
+      if (timers.gold) window.clearTimeout(timers.gold);
+      if (timers.rightGold) window.clearTimeout(timers.rightGold);
+      if (timers.xp) window.clearTimeout(timers.xp);
+      if (timers.rightXp) window.clearTimeout(timers.rightXp);
+    };
+  }, []);
+
   // Hiệu ứng nhảy số vàng khi nhận thưởng
   useEffect(() => {
     if (snapshot.playerGold > prevGoldRef.current) {
       setGoldPop(true);
-      const timer = setTimeout(() => setGoldPop(false), 250);
+      const timer = window.setTimeout(() => setGoldPop(false), CONFIG.death.hudPulseMs);
       prevGoldRef.current = snapshot.playerGold;
-      return () => clearTimeout(timer);
+      return () => window.clearTimeout(timer);
     }
     prevGoldRef.current = snapshot.playerGold;
   }, [snapshot.playerGold]);
@@ -409,13 +494,12 @@ export const HUD: React.FC<HUDProps> = ({
         <div
           style={{
             pointerEvents: 'auto',
-            background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.56) 0%, rgba(15, 23, 42, 0.28) 100%)',
+            background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.86) 0%, rgba(15, 23, 42, 0.72) 100%)',
             border: '1px solid rgba(56, 189, 248, 0.32)',
             borderRadius: '14px',
             padding: '8px 14px',
             boxShadow: '0 6px 20px rgba(0,0,0,0.3)',
             minWidth: '290px',
-            backdropFilter: 'blur(6px)',
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -441,12 +525,14 @@ export const HUD: React.FC<HUDProps> = ({
           >
             <div
               style={{
-                width: `${Math.max(0, (snapshot.playerBaseHp / 1000) * 100)}%`,
+                width: '100%',
                 height: '100%',
                 background: isBaseCritical
                   ? 'linear-gradient(90deg, #ef4444, #dc2626)'
                   : 'linear-gradient(90deg, #16a34a, #22c55e, #4ade80)',
-                transition: 'width 0.2s ease',
+                transform: `scaleX(${Math.max(0, Math.min(1, snapshot.playerBaseHp / 1000))})`,
+                transformOrigin: 'left center',
+                transition: 'transform 0.18s ease',
               }}
             />
             <div
@@ -470,26 +556,46 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
 
           {/* DÒNG TÀI NGUYÊN: VÀNG NHẢY SỐ & XP */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-            {/* Vàng số to nhảy số */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                transform: goldPop ? 'scale(1.15)' : 'scale(1.0)',
-                transition: 'transform 0.15s ease',
-              }}
-            >
-              <span style={{ fontSize: '20px' }}>💰</span>
-              <span
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px', gap: '8px' }}>
+            {/* Vàng số to nhảy số & XP bay chạm thanh */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div
                 style={{
-                  fontSize: '18px',
-                  fontWeight: 800,
-                  color: '#facc15',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  transform: goldPop ? 'scale(1.15)' : 'scale(1.0)',
+                  opacity: goldPop ? 1 : 0.96,
+                  transition: 'transform 0.14s ease, opacity 0.14s ease',
                 }}
               >
-                {snapshot.playerGold}
+                <span style={{ fontSize: '20px' }}>💰</span>
+                <span
+                  style={{
+                    fontSize: '18px',
+                    fontWeight: 800,
+                    color: '#facc15',
+                  }}
+                >
+                  {snapshot.playerGold}
+                </span>
+              </div>
+
+              <span
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  color: '#38bdf8',
+                  background: 'rgba(14, 116, 144, 0.35)',
+                  padding: '2px 7px',
+                  borderRadius: '6px',
+                  transform: xpPop ? 'scale(1.14)' : 'scale(1.0)',
+                  boxShadow: xpPop ? '0 0 10px rgba(56, 189, 248, 0.8)' : 'none',
+                  transition: 'transform 0.14s ease, box-shadow 0.14s ease',
+                  display: 'inline-block',
+                }}
+              >
+                ✨ {snapshot.playerXp} XP
               </span>
             </div>
 
@@ -497,7 +603,7 @@ export const HUD: React.FC<HUDProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span
                 style={{
-                  fontSize: '11px',
+                  fontSize: '12px',
                   fontWeight: 700,
                   background: snapshot.playerAge === 6 ? 'rgba(6, 78, 59, 0.6)' : 'rgba(30, 58, 138, 0.6)',
                   color: snapshot.playerAge === 6 ? '#34d399' : '#93c5fd',
@@ -522,7 +628,7 @@ export const HUD: React.FC<HUDProps> = ({
                     border: 'none',
                     borderRadius: '6px',
                     padding: '4px 8px',
-                    fontSize: '11px',
+                    fontSize: '12px',
                     fontWeight: 800,
                     cursor: canAgeUp ? 'pointer' : 'not-allowed',
                   }}
@@ -539,7 +645,7 @@ export const HUD: React.FC<HUDProps> = ({
           <div
             style={{
               pointerEvents: 'auto',
-              background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.62) 0%, rgba(15, 23, 42, 0.34) 100%)',
+              background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.86) 0%, rgba(15, 23, 42, 0.74) 100%)',
               border: '1px solid rgba(255, 255, 255, 0.16)',
               borderRadius: '18px',
               padding: '5px 14px',
@@ -547,7 +653,6 @@ export const HUD: React.FC<HUDProps> = ({
               alignItems: 'center',
               gap: '10px',
               boxShadow: '0 4px 14px rgba(0,0,0,0.32)',
-              backdropFilter: 'blur(6px)',
             }}
           >
             <span style={{ fontWeight: 800, fontSize: '16px', color: '#f8fafc', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
@@ -557,7 +662,7 @@ export const HUD: React.FC<HUDProps> = ({
             {snapshot.gameMode === 'ONLINE_2P' && netState === 'CONNECTED' && (
               <span
                 style={{
-                  fontSize: '11px',
+                  fontSize: '12px',
                   fontWeight: 700,
                   color: '#34d399',
                   background: 'rgba(16, 185, 129, 0.2)',
@@ -738,26 +843,28 @@ export const HUD: React.FC<HUDProps> = ({
               }}
             />
 
-            {/* Tiền tuyến (Frontline marker phát sáng nhấp nháy) */}
+            {/* Tiền tuyến (Frontline marker - DOM transform sở hữu trực tiếp bởi GameLoop batch) */}
             <div
+              data-hud-role="minimap-frontline"
               style={{
                 position: 'absolute',
-                left: `${(snapshot.frontlineX / snapshot.laneWidth) * 100}%`,
+                left: 0,
                 top: 0,
                 width: '3px',
                 height: '100%',
+                marginLeft: '-1.5px',
                 background: '#facc15',
-                boxShadow: '0 0 8px #facc15, 0 0 14px #eab308',
-                transform: 'translateX(-50%)',
+                willChange: 'transform',
                 zIndex: 5,
               }}
             />
 
-            {/* Khung nhìn Camera Viewport (Cyan Frame) */}
+            {/* Khung nhìn Camera Viewport (Cyan Frame - DOM transform sở hữu trực tiếp bởi GameLoop batch) */}
             <div
+              data-hud-role="minimap-cam"
               style={{
                 position: 'absolute',
-                left: `${(snapshot.cameraX / snapshot.laneWidth) * 100}%`,
+                left: 0,
                 top: 0,
                 width: `${(1280 / snapshot.laneWidth) * 100}%`,
                 height: '100%',
@@ -765,9 +872,9 @@ export const HUD: React.FC<HUDProps> = ({
                 border: '1.5px solid #38bdf8',
                 boxSizing: 'border-box',
                 borderRadius: '3px',
+                willChange: 'transform',
                 zIndex: 6,
                 pointerEvents: 'none',
-                boxShadow: '0 0 6px rgba(56, 189, 248, 0.6)',
               }}
             />
           </div>
@@ -779,13 +886,12 @@ export const HUD: React.FC<HUDProps> = ({
           <div
             style={{
               pointerEvents: 'auto',
-              background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.56) 0%, rgba(15, 23, 42, 0.28) 100%)',
+              background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.86) 0%, rgba(15, 23, 42, 0.72) 100%)',
               border: '1px solid rgba(248, 113, 113, 0.32)',
               borderRadius: '14px',
               padding: '8px 14px',
               boxShadow: '0 6px 20px rgba(0,0,0,0.3)',
               minWidth: '290px',
-              backdropFilter: 'blur(6px)',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -805,10 +911,28 @@ export const HUD: React.FC<HUDProps> = ({
 
             {snapshot.gameMode !== 'SOLO' && (
               <div style={{ display: 'flex', gap: '10px', marginBottom: '6px', justifyContent: 'flex-end' }}>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: '#facc15' }}>
+                <span
+                  style={{
+                    fontSize: '12px',
+                    fontWeight: 800,
+                    color: '#facc15',
+                    transform: rightGoldPop ? 'scale(1.15)' : 'scale(1.0)',
+                    transition: 'transform 0.14s ease',
+                    display: 'inline-block',
+                  }}
+                >
                   💰 {snapshot.rightGold} Vàng
                 </span>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: '#a855f7' }}>
+                <span
+                  style={{
+                    fontSize: '12px',
+                    fontWeight: 800,
+                    color: '#a855f7',
+                    transform: rightXpPop ? 'scale(1.14)' : 'scale(1.0)',
+                    transition: 'transform 0.14s ease',
+                    display: 'inline-block',
+                  }}
+                >
                   ✨ {snapshot.rightXp} XP
                 </span>
               </div>
@@ -828,10 +952,12 @@ export const HUD: React.FC<HUDProps> = ({
             >
               <div
                 style={{
-                  width: `${Math.max(0, (snapshot.botBaseHp / 1000) * 100)}%`,
+                  width: '100%',
                   height: '100%',
                   background: 'linear-gradient(90deg, #dc2626, #ef4444, #f87171)',
-                  transition: 'width 0.2s ease',
+                  transform: `scaleX(${Math.max(0, Math.min(1, snapshot.botBaseHp / 1000))})`,
+                  transformOrigin: 'left center',
+                  transition: 'transform 0.18s ease',
                 }}
               />
               <div
@@ -857,7 +983,7 @@ export const HUD: React.FC<HUDProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', alignItems: 'center', gap: '6px' }}>
               <span
                 style={{
-                  fontSize: '11px',
+                  fontSize: '12px',
                   fontWeight: 700,
                   background: 'rgba(127, 29, 29, 0.5)',
                   color: '#fca5a5',
@@ -881,7 +1007,7 @@ export const HUD: React.FC<HUDProps> = ({
                     border: 'none',
                     borderRadius: '6px',
                     padding: '4px 8px',
-                    fontSize: '11px',
+                    fontSize: '12px',
                     fontWeight: 800,
                     cursor: canRightAgeUp ? 'pointer' : 'not-allowed',
                   }}
@@ -889,7 +1015,7 @@ export const HUD: React.FC<HUDProps> = ({
                   {canRightAgeUp ? '⭐ LÊN KỶ NGUYÊN!' : `Cần ${rightNextAgeConfig.xpRequired} XP`}
                 </button>
               ) : (
-                <span style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8' }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8' }}>
                   Chiêu cuối: {snapshot.botUltiCooldownPercent <= 0 ? '🟢 Sẵn sàng' : `${Math.round(snapshot.botUltiCooldownPercent * 100)}%`}
                 </span>
               )}
@@ -902,12 +1028,11 @@ export const HUD: React.FC<HUDProps> = ({
               pointerEvents: 'auto',
               display: 'flex',
               gap: '6px',
-              background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.58) 0%, rgba(15, 23, 42, 0.32) 100%)',
+              background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.86) 0%, rgba(15, 23, 42, 0.72) 100%)',
               border: '1px solid rgba(255, 255, 255, 0.14)',
               borderRadius: '12px',
               padding: '4px 8px',
               boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-              backdropFilter: 'blur(6px)',
             }}
           >
             {/* Tab Vũ Khí Thành [T] */}
@@ -925,7 +1050,7 @@ export const HUD: React.FC<HUDProps> = ({
                 border: 'none',
                 borderRadius: '8px',
                 padding: '6px 10px',
-                fontSize: '11px',
+                fontSize: '12px',
                 fontWeight: 700,
                 cursor: 'pointer',
                 display: 'flex',
@@ -935,7 +1060,7 @@ export const HUD: React.FC<HUDProps> = ({
               title="Quản lý và nâng cấp vũ khí trên thành phòng thủ (Phím T)"
             >
               <span>🏰 Vũ Khí Thành (Lv {turretCurrentLvl}/3)</span>
-              <span style={{ fontSize: '10px', opacity: 0.8, color: '#fef08a' }}>[T]</span>
+              <span style={{ fontSize: '12px', opacity: 0.85, color: '#fef08a' }}>[T]</span>
             </button>
 
             {/* Tab Evolve (E) - Pulse vàng kim khi đủ XP */}
@@ -958,17 +1083,19 @@ export const HUD: React.FC<HUDProps> = ({
                 border: 'none',
                 borderRadius: '8px',
                 padding: '6px 10px',
-                fontSize: '11px',
+                fontSize: '12px',
                 fontWeight: 700,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px',
+                transform: xpPop ? 'scale(1.06)' : 'scale(1.0)',
+                transition: 'transform 0.14s ease',
               }}
               title="Tiến hóa lên kỷ nguyên tiếp theo (Phím E)"
             >
               <span>⭐ Lên Kỷ Nguyên</span>
-              <span style={{ fontSize: '10px', opacity: 0.8 }}>[{isGuestRole ? 'O' : 'E'}]</span>
+              <span style={{ fontSize: '12px', opacity: 0.85 }}>[{isGuestRole ? 'O' : 'E'}]</span>
             </button>
           </div>
 
@@ -984,7 +1111,6 @@ export const HUD: React.FC<HUDProps> = ({
                 width: '400px',
                 boxShadow: '0 20px 40px -10px rgba(0,0,0,0.8)',
                 zIndex: 85,
-                backdropFilter: 'blur(12px)',
                 animation: 'fadeInDown 0.2s ease',
               }}
             >
@@ -1022,13 +1148,13 @@ export const HUD: React.FC<HUDProps> = ({
                         <div style={{ fontSize: '13px', fontWeight: 900, color: '#f8fafc' }}>
                           ⚡ Cấp Độ Vũ Khí Toàn Thành: Lv {turretCurrentLvl}/3
                         </div>
-                        <div style={{ fontSize: '11px', color: '#5eead4', marginTop: '2px' }}>
+                        <div style={{ fontSize: '12px', color: '#5eead4', marginTop: '2px' }}>
                           +{turretCurrentLvl * 25}% Sát thương | +{turretCurrentLvl * 10}% Tầm bắn
                         </div>
                       </div>
 
                       {turretCurrentLvl >= UPGRADE_CONFIG.turret.maxLevel ? (
-                        <span style={{ fontSize: '11px', fontWeight: 900, color: '#4ade80' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 900, color: '#4ade80' }}>
                           ✅ TỐI ĐA
                         </span>
                       ) : (
@@ -1076,7 +1202,7 @@ export const HUD: React.FC<HUDProps> = ({
                       <div style={{ fontSize: '13px', fontWeight: 800, color: '#cbd5e1' }}>
                         Ô Cắm Vũ Khí: <b>{turretSlotsCount}</b> / 3 Ô
                       </div>
-                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                      <div style={{ fontSize: '12px', color: '#94a3b8' }}>
                         {canAddSlot ? `Chi phí mở ô thứ ${turretSlotsCount + 1}: ${nextSlotCost}G` : 'Đã đạt giới hạn tối đa 3 ô'}
                       </div>
                     </div>
@@ -1092,7 +1218,7 @@ export const HUD: React.FC<HUDProps> = ({
                           border: canAffordAddSlot ? '1px solid #c084fc' : 'none',
                           borderRadius: '8px',
                           padding: '6px 12px',
-                          fontSize: '11px',
+                          fontSize: '12px',
                           fontWeight: 900,
                           cursor: canAffordAddSlot ? 'pointer' : 'not-allowed',
                         }}
@@ -1130,11 +1256,11 @@ export const HUD: React.FC<HUDProps> = ({
                               Ô {idx + 1}: {turret ? turret.config.name : 'Chưa gắn vũ khí'}
                             </div>
                             {turret ? (
-                              <div style={{ fontSize: '11px', color: '#5eead4' }}>
+                              <div style={{ fontSize: '12px', color: '#5eead4' }}>
                                 ST: {Math.round(turret.damage)} | Tầm: {Math.round(turret.range)}px
                               </div>
                             ) : (
-                              <div style={{ fontSize: '11px', color: '#64748b' }}>
+                              <div style={{ fontSize: '12px', color: '#64748b' }}>
                                 Vũ khí Kỷ Nguyên: {availableTurret ? availableTurret.name : 'Không có'}
                               </div>
                             )}
@@ -1150,7 +1276,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 border: 'none',
                                 borderRadius: '6px',
                                 padding: '5px 10px',
-                                fontSize: '11px',
+                                fontSize: '12px',
                                 fontWeight: 800,
                                 cursor: 'pointer',
                               }}
@@ -1171,7 +1297,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 border: canAfford ? '1px solid #4ade80' : 'none',
                                 borderRadius: '6px',
                                 padding: '5px 10px',
-                                fontSize: '11px',
+                                fontSize: '12px',
                                 fontWeight: 800,
                                 cursor: canAfford ? 'pointer' : 'not-allowed',
                               }}
@@ -1285,7 +1411,6 @@ export const HUD: React.FC<HUDProps> = ({
             padding: '14px',
             width: '240px',
             boxShadow: '0 8px 30px rgba(0,0,0,0.7)',
-            backdropFilter: 'blur(10px)',
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -1346,12 +1471,11 @@ export const HUD: React.FC<HUDProps> = ({
             <div
               style={{
                 flex: 1,
-                background: 'rgba(15, 23, 42, 0.88)',
+                background: 'rgba(15, 23, 42, 0.90)',
                 border: '1px solid rgba(59, 130, 246, 0.25)',
                 borderRadius: '14px',
                 padding: '8px 12px',
                 boxShadow: '0 8px 20px -5px rgba(0,0,0,0.5)',
-                backdropFilter: 'blur(8px)',
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -1366,8 +1490,8 @@ export const HUD: React.FC<HUDProps> = ({
                       color: '#fff',
                       border: 'none',
                       borderRadius: '6px',
-                      padding: '2px 8px',
-                      fontSize: '11px',
+                      padding: '3px 8px',
+                      fontSize: '12px',
                       fontWeight: 700,
                       cursor: canAgeUp ? 'pointer' : 'not-allowed',
                     }}
@@ -1383,8 +1507,8 @@ export const HUD: React.FC<HUDProps> = ({
                       color: '#fff',
                       border: 'none',
                       borderRadius: '6px',
-                      padding: '2px 8px',
-                      fontSize: '11px',
+                      padding: '3px 8px',
+                      fontSize: '12px',
                       fontWeight: 700,
                       cursor: ultiReady ? 'pointer' : 'not-allowed',
                     }}
@@ -1396,6 +1520,9 @@ export const HUD: React.FC<HUDProps> = ({
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
                 {playerAgeConfig.units.map((unit, idx) => {
                   const canAfford = snapshot.playerGold >= unit.cost;
+                  const queuedCount = snapshot.playerQueue.filter((q) => q.unitId === unit.id).length;
+                  const isFirstInQueue = snapshot.playerQueue[0]?.unitId === unit.id;
+                  const progress = isFirstInQueue ? snapshot.playerQueue[0]!.progress / snapshot.playerQueue[0]!.duration : 0;
                   const unitTypeIcons: Record<string, string> = { MELEE: '⚔️', RANGED: '🏹', TANK: '🛡️', SPECIAL: '✨' };
                   const portraitSrc = `/assets/units/age${snapshot.playerAge}_unit_${unit.type.toLowerCase()}.png`;
                   return (
@@ -1406,7 +1533,9 @@ export const HUD: React.FC<HUDProps> = ({
                       disabled={!canAfford}
                       title={`${unit.name} (${unit.cost}G)`}
                       style={{
-                        height: isPortrait ? '74px' : '86px',
+                        position: 'relative',
+                        overflow: 'hidden',
+                        height: isPortrait ? '80px' : '90px',
                         background: canAfford ? 'rgba(30, 41, 59, 0.78)' : 'rgba(15, 23, 42, 0.45)',
                         border: canAfford ? '1px solid rgba(56, 189, 248, 0.45)' : '1px solid rgba(255, 255, 255, 0.06)',
                         borderRadius: '10px',
@@ -1419,9 +1548,23 @@ export const HUD: React.FC<HUDProps> = ({
                         alignItems: 'center',
                       }}
                     >
-                      <span style={{ background: '#38bdf8', color: '#000', borderRadius: '4px', padding: '0 4px', fontSize: '9px', fontWeight: 800 }}>
-                        [{idx + 1}]
-                      </span>
+                      {isFirstInQueue && (
+                        <RadialCooldownOverlay
+                          remainingFrac={Math.max(0.02, 1 - progress)}
+                          size={isPortrait ? 34 : 40}
+                          color="#38bdf8"
+                        />
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center', position: 'relative', zIndex: 3 }}>
+                        <span style={{ background: '#38bdf8', color: '#000', borderRadius: '4px', padding: '0 4px', fontSize: '12px', fontWeight: 800 }}>
+                          [{idx + 1}]
+                        </span>
+                        {queuedCount > 0 && (
+                          <span style={{ background: '#f59e0b', color: '#000', borderRadius: '6px', padding: '0 4px', fontSize: '12px', fontWeight: 800 }}>
+                            x{queuedCount}
+                          </span>
+                        )}
+                      </div>
                       <img
                         src={portraitSrc}
                         alt={unit.name}
@@ -1429,7 +1572,7 @@ export const HUD: React.FC<HUDProps> = ({
                           width: isPortrait ? '32px' : '40px',
                           height: isPortrait ? '32px' : '40px',
                           objectFit: 'contain',
-                          filter: canAfford ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.65))' : 'grayscale(1) opacity(0.55)',
+                          opacity: canAfford ? 1 : 0.48,
                         }}
                         onError={(e) => {
                           e.currentTarget.style.display = 'none';
@@ -1438,7 +1581,7 @@ export const HUD: React.FC<HUDProps> = ({
                         }}
                       />
                       <span style={{ display: 'none', fontSize: isPortrait ? '14px' : '16px' }}>{unitTypeIcons[unit.type] || '⚔️'}</span>
-                      <span style={{ fontSize: '10px', fontWeight: 800, color: canAfford ? '#facc15' : '#ef4444' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 800, color: canAfford ? '#facc15' : '#ef4444', position: 'relative', zIndex: 3 }}>
                         {unit.cost}G
                       </span>
                     </button>
@@ -1452,12 +1595,11 @@ export const HUD: React.FC<HUDProps> = ({
               style={{
                 flex: 1,
                 position: 'relative',
-                background: 'rgba(15, 23, 42, 0.88)',
+                background: 'rgba(15, 23, 42, 0.90)',
                 border: '1px solid rgba(239, 68, 68, 0.25)',
                 borderRadius: '14px',
                 padding: '8px 12px',
                 boxShadow: '0 8px 20px -5px rgba(0,0,0,0.5)',
-                backdropFilter: 'blur(8px)',
               }}
             >
               {/* NGĂN KÉO QUẢN LÝ PHÁO THÀNH CHO P2 (LOCAL_2P) */}
@@ -1474,7 +1616,6 @@ export const HUD: React.FC<HUDProps> = ({
                     padding: '14px',
                     boxShadow: '0 20px 40px rgba(0,0,0,0.85)',
                     zIndex: 90,
-                    backdropFilter: 'blur(12px)',
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -1502,7 +1643,7 @@ export const HUD: React.FC<HUDProps> = ({
                         border: 'none',
                         borderRadius: '8px',
                         padding: '6px 8px',
-                        fontSize: '11px',
+                        fontSize: '12px',
                         fontWeight: 800,
                         cursor: canAffordRightTurretUpgrade ? 'pointer' : 'not-allowed',
                       }}
@@ -1524,7 +1665,7 @@ export const HUD: React.FC<HUDProps> = ({
                           border: 'none',
                           borderRadius: '8px',
                           padding: '6px 8px',
-                          fontSize: '11px',
+                          fontSize: '12px',
                           fontWeight: 800,
                           cursor: canAffordAddRightSlot ? 'pointer' : 'not-allowed',
                         }}
@@ -1564,7 +1705,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 border: 'none',
                                 borderRadius: '6px',
                                 padding: '4px 8px',
-                                fontSize: '11px',
+                                fontSize: '12px',
                                 fontWeight: 800,
                                 cursor: 'pointer',
                               }}
@@ -1584,7 +1725,7 @@ export const HUD: React.FC<HUDProps> = ({
                                 border: 'none',
                                 borderRadius: '6px',
                                 padding: '4px 8px',
-                                fontSize: '11px',
+                                fontSize: '12px',
                                 fontWeight: 800,
                                 cursor: canAfford ? 'pointer' : 'not-allowed',
                               }}
@@ -1600,7 +1741,18 @@ export const HUD: React.FC<HUDProps> = ({
               )}
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '4px' }}>
-                <span style={{ fontWeight: 800, fontSize: '12px', color: '#f87171' }}>⚔️ P2 (PHE ĐỎ) — 💰 {snapshot.rightGold}G</span>
+                <span
+                  style={{
+                    fontWeight: 800,
+                    fontSize: '12px',
+                    color: '#f87171',
+                    transform: rightGoldPop ? 'scale(1.08)' : 'scale(1.0)',
+                    transition: 'transform 0.14s ease',
+                    display: 'inline-block',
+                  }}
+                >
+                  ⚔️ P2 (PHE ĐỎ) — 💰 {snapshot.rightGold}G
+                </span>
                 <div style={{ display: 'flex', gap: '5px' }}>
                   <button
                     type="button"
@@ -1614,7 +1766,7 @@ export const HUD: React.FC<HUDProps> = ({
                       border: '1px solid rgba(248, 113, 113, 0.35)',
                       borderRadius: '6px',
                       padding: '2px 7px',
-                      fontSize: '11px',
+                      fontSize: '12px',
                       fontWeight: 700,
                       cursor: 'pointer',
                     }}
@@ -1632,7 +1784,7 @@ export const HUD: React.FC<HUDProps> = ({
                       border: 'none',
                       borderRadius: '6px',
                       padding: '2px 8px',
-                      fontSize: '11px',
+                      fontSize: '12px',
                       fontWeight: 700,
                       cursor: canRightAgeUp ? 'pointer' : 'not-allowed',
                     }}
@@ -1649,7 +1801,7 @@ export const HUD: React.FC<HUDProps> = ({
                       border: 'none',
                       borderRadius: '6px',
                       padding: '2px 8px',
-                      fontSize: '11px',
+                      fontSize: '12px',
                       fontWeight: 700,
                       cursor: rightUltiReady ? 'pointer' : 'not-allowed',
                     }}
@@ -1661,6 +1813,9 @@ export const HUD: React.FC<HUDProps> = ({
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
                 {botAgeConfig.units.map((unit, idx) => {
                   const canAfford = snapshot.rightGold >= unit.cost;
+                  const queuedCount = snapshot.rightQueue.filter((q) => q.unitId === unit.id).length;
+                  const isFirstInQueue = snapshot.rightQueue[0]?.unitId === unit.id;
+                  const progress = isFirstInQueue ? snapshot.rightQueue[0]!.progress / snapshot.rightQueue[0]!.duration : 0;
                   const p2Hotkeys = ['J', 'K', 'L', ';'];
                   const unitTypeIcons: Record<string, string> = { MELEE: '⚔️', RANGED: '🏹', TANK: '🛡️', SPECIAL: '✨' };
                   const portraitSrc = `/assets/units/age${snapshot.botAge}_unit_${unit.type.toLowerCase()}.png`;
@@ -1672,7 +1827,9 @@ export const HUD: React.FC<HUDProps> = ({
                       disabled={!canAfford}
                       title={`${unit.name} (${unit.cost}G)`}
                       style={{
-                        height: isPortrait ? '74px' : '86px',
+                        position: 'relative',
+                        overflow: 'hidden',
+                        height: isPortrait ? '80px' : '90px',
                         background: canAfford ? 'rgba(30, 41, 59, 0.78)' : 'rgba(15, 23, 42, 0.45)',
                         border: canAfford ? '1px solid rgba(239, 68, 68, 0.45)' : '1px solid rgba(255, 255, 255, 0.06)',
                         borderRadius: '10px',
@@ -1685,9 +1842,23 @@ export const HUD: React.FC<HUDProps> = ({
                         alignItems: 'center',
                       }}
                     >
-                      <span style={{ background: '#ef4444', color: '#fff', borderRadius: '4px', padding: '0 4px', fontSize: '9px', fontWeight: 800 }}>
-                        [{p2Hotkeys[idx]}]
-                      </span>
+                      {isFirstInQueue && (
+                        <RadialCooldownOverlay
+                          remainingFrac={Math.max(0.02, 1 - progress)}
+                          size={isPortrait ? 34 : 40}
+                          color="#f87171"
+                        />
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center', position: 'relative', zIndex: 3 }}>
+                        <span style={{ background: '#ef4444', color: '#fff', borderRadius: '4px', padding: '0 4px', fontSize: '12px', fontWeight: 800 }}>
+                          [{p2Hotkeys[idx]}]
+                        </span>
+                        {queuedCount > 0 && (
+                          <span style={{ background: '#f59e0b', color: '#000', borderRadius: '6px', padding: '0 4px', fontSize: '12px', fontWeight: 800 }}>
+                            x{queuedCount}
+                          </span>
+                        )}
+                      </div>
                       <img
                         src={portraitSrc}
                         alt={unit.name}
@@ -1696,7 +1867,7 @@ export const HUD: React.FC<HUDProps> = ({
                           height: isPortrait ? '32px' : '40px',
                           objectFit: 'contain',
                           transform: 'scaleX(-1)',
-                          filter: canAfford ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.65))' : 'grayscale(1) opacity(0.55)',
+                          opacity: canAfford ? 1 : 0.48,
                         }}
                         onError={(e) => {
                           e.currentTarget.style.display = 'none';
@@ -1705,7 +1876,7 @@ export const HUD: React.FC<HUDProps> = ({
                         }}
                       />
                       <span style={{ display: 'none', fontSize: isPortrait ? '14px' : '16px' }}>{unitTypeIcons[unit.type] || '⚔️'}</span>
-                      <span style={{ fontSize: '10px', fontWeight: 800, color: canAfford ? '#facc15' : '#ef4444' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 800, color: canAfford ? '#facc15' : '#ef4444', position: 'relative', zIndex: 3 }}>
                         {unit.cost}G
                       </span>
                     </button>
@@ -1724,12 +1895,11 @@ export const HUD: React.FC<HUDProps> = ({
                 pointerEvents: 'auto',
                 display: 'flex',
                 gap: isPortrait ? '8px' : '10px',
-                background: 'rgba(15, 23, 42, 0.85)',
+                background: 'rgba(15, 23, 42, 0.88)',
                 border: '1px solid rgba(255, 255, 255, 0.08)',
                 borderRadius: '16px',
                 padding: isPortrait ? '6px 8px' : '8px 12px',
                 boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)',
-                backdropFilter: 'blur(10px)',
               }}
             >
               {(snapshot.gameMode === 'ONLINE_2P' && netRole === 'GUEST' ? botAgeConfig : playerAgeConfig).units.map((unit, idx) => {
@@ -1774,8 +1944,8 @@ export const HUD: React.FC<HUDProps> = ({
                     title={`${unit.name} — Sát thương ${unit.damage} | Máu ${unit.hp}`}
                     style={{
                       position: 'relative',
-                      width: isPortrait ? '78px' : '118px',
-                      height: isPortrait ? '94px' : '112px',
+                      width: isPortrait ? '82px' : '122px',
+                      height: isPortrait ? '98px' : '116px',
                       background: canAfford
                         ? 'linear-gradient(180deg, rgba(30, 41, 59, 0.82) 0%, rgba(15, 23, 42, 0.88) 100%)'
                         : 'rgba(15, 23, 42, 0.5)',
@@ -1793,27 +1963,36 @@ export const HUD: React.FC<HUDProps> = ({
                     }}
                   >
                     {isFirstInQueue && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          bottom: 0,
-                          left: 0,
-                          width: `${progress * 100}%`,
-                          height: '3px',
-                          background: '#38bdf8',
-                          transition: 'width 0.1s linear',
-                        }}
-                      />
+                      <>
+                        <RadialCooldownOverlay
+                          remainingFrac={Math.max(0.02, 1 - progress)}
+                          size={CONFIG.hud.radialCooldownSizePx}
+                          color={isGuestRole ? '#f87171' : '#38bdf8'}
+                        />
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '3px',
+                            background: '#38bdf8',
+                            transform: `scaleX(${Math.max(0, Math.min(1, progress))})`,
+                            transformOrigin: 'left center',
+                            transition: 'transform 0.1s linear',
+                          }}
+                        />
+                      </>
                     )}
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center', position: 'relative', zIndex: 3 }}>
                       <span
                         style={{
                           background: isGuestRole ? 'rgba(239, 68, 68, 0.35)' : 'rgba(56, 189, 248, 0.32)',
                           color: isGuestRole ? '#fca5a5' : '#7dd3fc',
                           borderRadius: '4px',
                           padding: '1px 5px',
-                          fontSize: '10px',
+                          fontSize: '12px',
                           fontWeight: 800,
                         }}
                       >
@@ -1826,14 +2005,14 @@ export const HUD: React.FC<HUDProps> = ({
                             color: '#000',
                             borderRadius: '8px',
                             padding: '1px 5px',
-                            fontSize: '9px',
+                            fontSize: '12px',
                             fontWeight: 800,
                           }}
                         >
                           x{queuedCount}
                         </span>
                       ) : (
-                        <span style={{ fontSize: '10px', opacity: 0.8 }}>{unitTypeIcons[unit.type] || '⚔️'}</span>
+                        <span style={{ fontSize: '12px', opacity: 0.85 }}>{unitTypeIcons[unit.type] || '⚔️'}</span>
                       )}
                     </div>
 
@@ -1842,12 +2021,10 @@ export const HUD: React.FC<HUDProps> = ({
                         src={portraitSrc}
                         alt={unit.name}
                         style={{
-                          width: isPortrait ? '38px' : '48px',
-                          height: isPortrait ? '38px' : '48px',
+                          width: isPortrait ? '36px' : '46px',
+                          height: isPortrait ? '36px' : '46px',
                           objectFit: 'contain',
-                          filter: canAfford
-                            ? 'drop-shadow(0 3px 5px rgba(0, 0, 0, 0.75))'
-                            : 'grayscale(1) opacity(0.5)',
+                          opacity: canAfford ? 1 : 0.45,
                         }}
                         onError={(e) => {
                           e.currentTarget.style.display = 'none';
@@ -1860,7 +2037,7 @@ export const HUD: React.FC<HUDProps> = ({
                       </div>
                       <div
                         style={{
-                          fontSize: isPortrait ? '9.5px' : '11px',
+                          fontSize: '12px',
                           fontWeight: 700,
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
@@ -1873,13 +2050,13 @@ export const HUD: React.FC<HUDProps> = ({
                       </div>
                     </div>
 
-                    <div style={{ textAlign: 'center', width: '100%' }}>
+                    <div style={{ textAlign: 'center', width: '100%', position: 'relative', zIndex: 3 }}>
                       {canAfford ? (
-                        <span style={{ fontSize: isPortrait ? '11px' : '12px', fontWeight: 800, color: '#facc15' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 800, color: '#facc15' }}>
                           💰 {unit.cost}
                         </span>
                       ) : (
-                        <span style={{ fontSize: '10px', fontWeight: 700, color: '#f87171' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#f87171' }}>
                           -{unit.cost - userGold}G
                         </span>
                       )}
@@ -1909,8 +2086,9 @@ export const HUD: React.FC<HUDProps> = ({
                 style={{
                   pointerEvents: 'auto',
                   position: 'relative',
-                  width: isPortrait ? '68px' : '88px',
-                  height: isPortrait ? '68px' : '88px',
+                  overflow: 'hidden',
+                  width: isPortrait ? '70px' : '88px',
+                  height: isPortrait ? '70px' : '88px',
                   borderRadius: '50%',
                   background: (snapshot.gameMode === 'ONLINE_2P' && netRole === 'GUEST' ? rightUltiReady : ultiReady)
                     ? 'linear-gradient(135deg, #ea580c, #c2410c)'
@@ -1928,12 +2106,25 @@ export const HUD: React.FC<HUDProps> = ({
                   justifyContent: 'center',
                 }}
               >
-                <span style={{ fontSize: isPortrait ? '22px' : '28px' }}>☄️</span>
-                <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.5px' }}>[SPACE]</span>
+                {(snapshot.gameMode === 'ONLINE_2P' && netRole === 'GUEST'
+                  ? snapshot.botUltiCooldownPercent
+                  : snapshot.playerUltiCooldownPercent) > 0 && (
+                  <RadialCooldownOverlay
+                    remainingFrac={
+                      snapshot.gameMode === 'ONLINE_2P' && netRole === 'GUEST'
+                        ? snapshot.botUltiCooldownPercent
+                        : snapshot.playerUltiCooldownPercent
+                    }
+                    fullCircle
+                    color="#facc15"
+                  />
+                )}
+                <span style={{ fontSize: isPortrait ? '22px' : '28px', position: 'relative', zIndex: 3 }}>☄️</span>
+                <span style={{ fontSize: '12px', fontWeight: 800, letterSpacing: '0.5px', position: 'relative', zIndex: 3 }}>[SPACE]</span>
               </button>
               <div
                 style={{
-                  fontSize: '11px',
+                  fontSize: '12px',
                   fontWeight: 700,
                   color: ultiReady ? '#fef08a' : '#64748b',
                   marginTop: '4px',
@@ -1962,7 +2153,6 @@ export const HUD: React.FC<HUDProps> = ({
             justifyContent: 'center',
             alignItems: 'center',
             zIndex: 1000,
-            backdropFilter: 'blur(8px)',
             pointerEvents: 'auto',
           }}
         >
@@ -2143,8 +2333,7 @@ export const HUD: React.FC<HUDProps> = ({
             left: 0,
             width: '100vw',
             height: '100vh',
-            background: 'rgba(3, 7, 18, 0.78)',
-            backdropFilter: 'blur(8px)',
+            background: 'rgba(3, 7, 18, 0.88)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2301,8 +2490,7 @@ export const HUD: React.FC<HUDProps> = ({
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(0, 0, 0, 0.75)',
-            backdropFilter: 'blur(4px)',
+            background: 'rgba(0, 0, 0, 0.82)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2397,8 +2585,7 @@ export const HUD: React.FC<HUDProps> = ({
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(0, 0, 0, 0.75)',
-            backdropFilter: 'blur(4px)',
+            background: 'rgba(0, 0, 0, 0.82)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2484,8 +2671,7 @@ export const HUD: React.FC<HUDProps> = ({
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(0, 0, 0, 0.75)',
-            backdropFilter: 'blur(4px)',
+            background: 'rgba(0, 0, 0, 0.82)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2593,4 +2779,4 @@ export const HUD: React.FC<HUDProps> = ({
       )}
     </div>
   );
-};
+});

@@ -22,13 +22,14 @@ import { AgeManager } from './AgeManager';
 import { audioSynth } from './AudioSynth';
 import { BotAI, type BotDifficulty } from './BotAI';
 import { Economy } from './Economy';
-import { particleSystem } from './ParticleSystem';
+import { particleSystem, type HitVfxTier } from './ParticleSystem';
 import { Projectile, ProjectilePool } from './Projectile';
 import { Turret, TurretManager } from './Turret';
 import { type BarrageShellSpec, UltimateManager } from './Ultimate';
 import { Unit, type CombatEvent } from './Unit';
 import { UpgradeManager, type UpgradeLevels } from './Upgrades';
 import { getModeMatchConfig, type GameMode, type ModeMatchConfig } from '../data/modes';
+import { CONFIG } from '../data/combatFeelConfig';
 
 export type { GameMode, ModeMatchConfig };
 
@@ -46,11 +47,29 @@ export interface FloatingText {
   id: string;
   text: string;
   x: number;
+  startY: number;
   y: number;
   color: number;
   duration: number;
   maxDuration: number;
   vy: number;
+  risePx: number;
+  scale: number;
+  isCrit: boolean;
+  targetKey?: string;
+  damageAmount?: number;
+  strokeWidth: number;
+  active: boolean;
+}
+
+export interface CombatImpactLog {
+  tick: number;
+  timeMs: number;
+  attackerId: string;
+  team: Team;
+  targetId: string;
+  damage: number;
+  tier: HitVfxTier;
 }
 
 export type GameStatus = 'PAUSED' | 'PLAYING' | 'VICTORY' | 'DEFEAT';
@@ -135,8 +154,10 @@ export class World {
   public readonly projectilePool = new ProjectilePool(120);
   public pendingBarrageShells: { team: Team; spec: BarrageShellSpec; timer: number }[] = [];
 
-  // Hiệu ứng chữ bay (Floating Text)
+  // Hiệu ứng chữ bay (Object Pool tái sử dụng, tối đa CONFIG.damageNumber.poolSize = 30)
+  private floatingTextPool: FloatingText[] = [];
   public floatingTexts: FloatingText[] = [];
+  private nextTextId = 1;
 
   // Trạng thái hiệu ứng màn hình
   public screenShake: number = 0;
@@ -147,17 +168,53 @@ export class World {
   public isUpdating: boolean = false;
   public commandQueue: WorldCommand[] = [];
 
-  // Đăng ký lắng nghe thay đổi trạng thái cho React HUD
+  // Đăng ký lắng nghe thay đổi trạng thái cho React HUD (chỉ push khi snapshot đổi)
   private subscribers: ((snapshot: WorldSnapshot) => void)[] = [];
   private hudNotifyCooldown: number = 0;
+  private lastHudSignature: string = '';
+  public onHudNotifyMeasured?: (touches: number, elapsedMs: number) => void;
   private nextUnitId = 1;
   private isHeadless: boolean = false;
+
+  // Log thời điểm va chạm thực tế (phục vụ xác minh lệch pha đòn đánh Hạng mục B)
+  public simTickCount: number = 0;
+  public readonly impactLogs: CombatImpactLog[] = [];
+
+  // Bộ đệm tái sử dụng mỗi tick 60Hz (tránh tạo mảng mới / GC pause mỗi tick)
+  private readonly queuedCombatEventsBuf: CombatEvent[] = [];
+  private readonly playerSnapshotBuf: Unit[] = [];
+  private readonly botSnapshotBuf: Unit[] = [];
+  private readonly queuedTurretShotsBuf: { turret: Turret; target: Unit }[] = [];
+  private readonly activeProjectilesBuf: Projectile[] = [];
+  private readonly impactingProjectilesBuf: Projectile[] = [];
 
   constructor(isHeadless: boolean = false) {
     this.isHeadless = isHeadless;
     this.playerUltimate.random = () => this.random();
     this.botUltimate.random = () => this.random();
     this.botAI.rng = () => this.random();
+    for (let i = 0; i < CONFIG.damageNumber.poolSize; i++) {
+      this.floatingTextPool.push(World.blankFloatingText());
+    }
+  }
+
+  private static blankFloatingText(): FloatingText {
+    return {
+      id: '',
+      text: '',
+      x: 0,
+      startY: 0,
+      y: 0,
+      color: 0xffffff,
+      duration: 0,
+      maxDuration: 0.7,
+      vy: 0,
+      risePx: 0,
+      scale: 1,
+      isCrit: false,
+      strokeWidth: 4,
+      active: false,
+    };
   }
 
   public initDefaultTurrets(): void {
@@ -289,10 +346,20 @@ export class World {
 
     this.projectilePool.clear();
     this.pendingBarrageShells = [];
-    this.floatingTexts = [];
+    for (const ft of this.floatingTexts) {
+      ft.active = false;
+      this.floatingTextPool.push(ft);
+    }
+    this.floatingTexts.length = 0;
     this.screenShake = 0;
+    if (!this.isHeadless) {
+      particleSystem.clear();
+    }
     this.glitchActive = false;
     this.glitchTimer = 0;
+    this.simTickCount = 0;
+    this.impactLogs.length = 0;
+    this.lastHudSignature = '';
 
     this.notifySubscribers();
   }
@@ -451,8 +518,11 @@ export class World {
       }
       this.hudNotifyCooldown -= dt;
       if (this.hudNotifyCooldown <= 0) {
-        this.hudNotifyCooldown = 0.08;
-        this.notifySubscribers();
+        this.hudNotifyCooldown = 0.1;
+        const sig = this.computeHudSignature();
+        if (sig !== this.lastHudSignature) {
+          this.notifySubscribers(sig);
+        }
       }
       return;
     }
@@ -460,6 +530,7 @@ export class World {
     this.isUpdating = true;
     try {
       this.matchTime += dt;
+      this.simTickCount++;
 
       // 1. Cập nhật hiệu ứng Glitch và Rung màn hình
       if (this.glitchTimer > 0) {
@@ -514,14 +585,22 @@ export class World {
       // PHA 1: PHA QUYẾT ĐỊNH (DECISION PHASE)
       // Cả hai phe cùng đọc trạng thái tại đầu tick.
       // KHÔNG trừ máu hay di chuyển thực tế ở pha này.
+      // Tái sử dụng toàn bộ buffer mảng nhằm loại bỏ GC pause mỗi tick 60Hz.
       // ==========================================================
-      const queuedCombatEvents: CombatEvent[] = [];
-      const onCombatIntent = (evt: CombatEvent) => {
-        queuedCombatEvents.push(evt);
-      };
+      const queuedCombatEvents = this.queuedCombatEventsBuf;
+      queuedCombatEvents.length = 0;
 
-      const playerSnapshot = [...this.playerUnits];
-      const botSnapshot = [...this.botUnits];
+      const playerSnapshot = this.playerSnapshotBuf;
+      playerSnapshot.length = 0;
+      for (let i = 0; i < this.playerUnits.length; i++) {
+        playerSnapshot.push(this.playerUnits[i]!);
+      }
+
+      const botSnapshot = this.botSnapshotBuf;
+      botSnapshot.length = 0;
+      for (let i = 0; i < this.botUnits.length; i++) {
+        botSnapshot.push(this.botUnits[i]!);
+      }
 
       // Đơn vị hai bên cùng tính toán hành động dựa trên snapshot đầu tick
       for (let i = 0; i < playerSnapshot.length; i++) {
@@ -530,7 +609,7 @@ export class World {
           playerSnapshot,
           botSnapshot,
           this.baseRightX,
-          onCombatIntent
+          this.queueCombatIntent
         );
       }
 
@@ -540,25 +619,28 @@ export class World {
           botSnapshot,
           playerSnapshot,
           this.baseLeftX,
-          onCombatIntent
+          this.queueCombatIntent
         );
       }
 
       // Tháp canh hai phe cùng quét mục tiêu và lên kế hoạch khai hỏa
-      const queuedTurretShots: { turret: Turret; target: Unit }[] = [];
-      this.playerTurrets.update(dt, botSnapshot, (turret, target) => {
-        queuedTurretShots.push({ turret, target });
-      });
-      this.botTurrets.update(dt, playerSnapshot, (turret, target) => {
-        queuedTurretShots.push({ turret, target });
-      });
+      const queuedTurretShots = this.queuedTurretShotsBuf;
+      queuedTurretShots.length = 0;
+      this.playerTurrets.update(dt, botSnapshot, this.queueTurretShot);
+      this.botTurrets.update(dt, playerSnapshot, this.queueTurretShot);
 
       // Đạn đạo di chuyển và xác định va chạm
-      const activeProjectiles = [...this.projectilePool.getActive()];
-      const impactingProjectiles: Projectile[] = [];
-      for (const proj of activeProjectiles) {
-        const hit = proj.update(dt);
-        if (hit) {
+      const activeProjectiles = this.activeProjectilesBuf;
+      activeProjectiles.length = 0;
+      const liveProjs = this.projectilePool.getActive();
+      for (let i = 0; i < liveProjs.length; i++) {
+        activeProjectiles.push(liveProjs[i]!);
+      }
+      const impactingProjectiles = this.impactingProjectilesBuf;
+      impactingProjectiles.length = 0;
+      for (let i = 0; i < activeProjectiles.length; i++) {
+        const proj = activeProjectiles[i]!;
+        if (proj.update(dt)) {
           impactingProjectiles.push(proj);
         }
       }
@@ -593,13 +675,33 @@ export class World {
         this.projectilePool.release(proj);
       }
 
-      // 2.5. Cập nhật Chữ bay (Floating Text)
+      // 2.5. Cập nhật Chữ bay (Ease-out bay lên 35px, pop scale 1.4 -> 1.0 trong 120ms, thu hồi về pool)
+      const popSec = Math.max(0.02, CONFIG.damageNumber.popDurationMs / 1000);
       for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
         const ft = this.floatingTexts[i]!;
         ft.duration += dt;
-        ft.y += ft.vy * dt;
         if (ft.duration >= ft.maxDuration) {
-          this.floatingTexts.splice(i, 1);
+          ft.active = false;
+          const last = this.floatingTexts.pop()!;
+          if (i < this.floatingTexts.length) {
+            this.floatingTexts[i] = last;
+          }
+          this.floatingTextPool.push(ft);
+          continue;
+        }
+        if (ft.risePx > 0) {
+          const t = ft.duration / ft.maxDuration;
+          const easeOut = 1 - Math.pow(1 - t, 3);
+          ft.y = ft.startY - ft.risePx * easeOut;
+        } else {
+          ft.y += ft.vy * dt;
+        }
+        if (ft.duration < popSec) {
+          const pt = ft.duration / popSec;
+          const popEase = 1 - Math.pow(1 - pt, 2);
+          ft.scale = CONFIG.damageNumber.popStartScale - (CONFIG.damageNumber.popStartScale - 1.0) * popEase;
+        } else {
+          ft.scale = 1.0;
         }
       }
 
@@ -620,16 +722,27 @@ export class World {
       // 2.7. Kiểm tra Điều Kiện Thắng / Thua (Căn cứ bị phá hủy)
       this.checkBaseDestruction();
 
-      // Giới hạn tần suất re-render của React HUD (~80ms)
+      // Chỉ đẩy snapshot xuống React HUD khi giá trị hiển thị thực sự thay đổi (tránh render DOM dư mỗi frame)
       this.hudNotifyCooldown -= dt;
       if (this.hudNotifyCooldown <= 0 || this.status !== 'PLAYING') {
         this.hudNotifyCooldown = 0.08;
-        this.notifySubscribers();
+        const sig = this.computeHudSignature();
+        if (sig !== this.lastHudSignature) {
+          this.notifySubscribers(sig);
+        }
       }
     } finally {
       this.isUpdating = false;
     }
   }
+
+  private readonly queueCombatIntent = (evt: CombatEvent): void => {
+    this.queuedCombatEventsBuf.push(evt);
+  };
+
+  private readonly queueTurretShot = (turret: Turret, target: Unit): void => {
+    this.queuedTurretShotsBuf.push({ turret, target });
+  };
 
   // ==========================================
   // XỬ LÝ SỰ KIỆN TÁC CHIẾN (COMBAT EVENTS)
@@ -637,44 +750,107 @@ export class World {
 
   private handleCombatEvent(evt: any): void {
     switch (evt.type) {
-      case 'MELEE_HIT':
+      case 'MELEE_HIT': {
         this.recordDamage(evt.damage, evt.sourceUnit?.team || null);
+        const isHeavy = Boolean(
+          evt.isHeavy ||
+            evt.sourceUnit?.config.type === 'TANK' ||
+            evt.sourceUnit?.config.type === 'SPECIAL'
+        );
+        const isCrit = Boolean(evt.isCrit);
+
+        let killedTarget = false;
+        let resolvedTargetId = 'unknown';
+
+        if (evt.targetUnit && evt.targetUnit.isAlive) {
+          resolvedTargetId = evt.targetUnit.id;
+          const dmgType = evt.damageType || evt.sourceUnit?.config.type || 'MELEE';
+          const targetFootY = 540 + (evt.targetUnit.laneOffsetY || 0);
+          evt.targetUnit.takeDamage(evt.damage, dmgType, evt.sourceUnit, (e: any) =>
+            this.handleCombatEvent(e)
+          );
+          killedTarget = !evt.targetUnit.isAlive;
+          this.addDamageNumber(
+            evt.damage,
+            evt.targetUnit.id,
+            evt.targetUnit.x,
+            targetFootY,
+            evt.sourceUnit.team,
+            isCrit
+          );
+        } else if (evt.targetBase || !evt.targetUnit) {
+          const baseKey = evt.sourceUnit.team === 'LEFT' ? 'base_right' : 'base_left';
+          resolvedTargetId = baseKey;
+          if (evt.sourceUnit.team === 'LEFT') {
+            this.botBaseHp -= evt.damage;
+            this.recordDamage(evt.damage, 'LEFT');
+            killedTarget = this.botBaseHp <= 0;
+          } else {
+            this.playerBaseHp -= evt.damage;
+            this.recordDamage(evt.damage, 'RIGHT');
+            killedTarget = this.playerBaseHp <= 0;
+          }
+          this.addDamageNumber(evt.damage, baseKey, evt.x, 540, evt.sourceUnit.team, isCrit);
+        }
+
+        // Thang VFX 3 mức (Hạng mục C): NORMAL (tia lửa nhỏ + vệt ngắn) -> HEAVY (vệt to + hit-stop dài) -> KILL (tối đa)
+        const vfxTier: HitVfxTier = killedTarget ? 'KILL' : isHeavy || isCrit ? 'HEAVY' : 'NORMAL';
+
+        if (this.impactLogs.length < 120) {
+          this.impactLogs.push({
+            tick: this.simTickCount,
+            timeMs: Math.round(this.matchTime * 1000),
+            attackerId: evt.sourceUnit?.id || 'unknown',
+            team: evt.sourceUnit?.team || 'LEFT',
+            targetId: resolvedTargetId,
+            damage: Math.round(evt.damage),
+            tier: vfxTier,
+          });
+        }
+
         if (!this.isHeadless) {
           audioSynth.playMeleeHit();
-          particleSystem.spawnHitSparks(evt.x, evt.y);
-        }
-        // Chi tiết bằng code: Rung màn hình khi Tank cận chiến đập trúng
-        if (evt.sourceUnit?.config.type === 'TANK') {
-          this.screenShake = Math.max(this.screenShake, 4.5);
-        }
-        this.addFloatingText(`-${Math.round(evt.damage)}`, evt.x, evt.y - 20, 0xf87171);
-        if (evt.targetUnit && evt.targetUnit.isAlive) {
-          const dmgType = evt.damageType || evt.sourceUnit?.config.type || 'MELEE';
-          evt.targetUnit.takeDamage(evt.damage, dmgType, evt.sourceUnit, (e: any) => this.handleCombatEvent(e));
-        } else if (evt.targetBase || !evt.targetUnit) {
-          if (evt.sourceUnit.team === 'LEFT') {
-            this.botBaseHp -= evt.damage;
-            this.recordDamage(evt.damage, 'LEFT');
-          } else {
-            this.playerBaseHp -= evt.damage;
-            this.recordDamage(evt.damage, 'RIGHT');
+          const slashColor =
+            vfxTier === 'KILL' || isCrit ? 0xfef08a : vfxTier === 'HEAVY' ? 0xfde047 : 0xffffff;
+          particleSystem.spawnSlashVfx(
+            evt.x,
+            evt.y,
+            evt.sourceUnit?.direction || 1,
+            slashColor,
+            vfxTier
+          );
+          particleSystem.spawnHitSparks(
+            evt.x,
+            evt.y,
+            vfxTier === 'NORMAL' ? 0xffe066 : 0xfacc15,
+            evt.footY,
+            vfxTier
+          );
+
+          // Căn chỉnh Hit-stop theo 3 mức: Thường 55ms, Mạnh 85ms, Kết liễu 95ms
+          const stopSec =
+            (vfxTier === 'KILL'
+              ? CONFIG.hitFeedback.killHitStopMs
+              : vfxTier === 'HEAVY'
+              ? CONFIG.hitFeedback.heavyHitStopMs
+              : CONFIG.hitFeedback.normalHitStopMs) / 1000;
+          if (evt.sourceUnit?.anim) {
+            evt.sourceUnit.anim.hitStopTimer = stopSec;
+          }
+          if (evt.targetUnit?.isAlive && evt.targetUnit?.anim) {
+            evt.targetUnit.anim.hitStopTimer = stopSec;
+          }
+
+          // Chỉ rung nhẹ 2.5px cho đòn mạnh/crit (đòn kết liễu rung 3px tại DEATH)
+          if (vfxTier === 'HEAVY') {
+            particleSystem.triggerMicroShake(
+              CONFIG.hitFeedback.heavyShakePx,
+              CONFIG.hitFeedback.shakeDurationMs
+            );
           }
         }
         break;
-        if (evt.sourceUnit?.config.type === 'TANK') {
-          this.screenShake = Math.max(this.screenShake, 4.5);
-        }
-        this.addFloatingText(`-${Math.round(evt.damage)}`, evt.x, evt.y - 20, 0xf87171);
-        if (evt.targetBase || !evt.targetUnit) {
-          if (evt.sourceUnit.team === 'LEFT') {
-            this.botBaseHp -= evt.damage;
-            this.recordDamage(evt.damage, 'LEFT');
-          } else {
-            this.playerBaseHp -= evt.damage;
-            this.recordDamage(evt.damage, 'RIGHT');
-          }
-        }
-        break;
+      }
 
       case 'RANGED_SHOOT': {
         const isLaser = evt.sourceUnit.team === 'LEFT' ? this.playerAge.currentAge >= 5 : this.botAge.currentAge >= 5;
@@ -741,21 +917,29 @@ export class World {
         const killerTeam: Team = deadUnit.team === 'LEFT' ? 'RIGHT' : 'LEFT';
         const eco = killerTeam === 'LEFT' ? this.playerEconomy : this.botEconomy;
 
-        if (!this.isHeadless) {
-          particleSystem.spawnDeathStars(deadUnit.x, deadUnit.y, 0xfacc15);
-        }
-
-        // Thưởng Vàng (60% giá quân) và XP (100% giá quân) theo data/economy.ts
+        // Thưởng Vàng (60% giá quân) và XP (100% giá quân) — giữ nguyên gameplay logic
         const bountyGold = getKillBountyGold(deadUnit.config.cost);
         const bountyXp = getKillBountyXp(deadUnit.config.cost);
         eco.addGold(bountyGold, true);
         eco.addXp(bountyXp);
 
-        // Hiển thị chữ "+vàng" bay lên tại chỗ lính chết
-        if (killerTeam === 'LEFT') {
-          this.addFloatingText(`+${bountyGold}G`, deadUnit.x, deadUnit.y - 30, 0xfbbf24);
-        } else {
-          this.addFloatingText(`+${bountyGold}G`, deadUnit.x, deadUnit.y - 30, 0xf87171);
+        if (!this.isHeadless) {
+          // Rung 3px trong 100ms khi kết liễu đơn vị + Bụi ngã + Xu vàng / Orb XP bay Bezier về HUD
+          particleSystem.triggerMicroShake(
+            CONFIG.hitFeedback.killShakePx,
+            CONFIG.hitFeedback.shakeDurationMs
+          );
+          particleSystem.spawnFallDust(deadUnit.x, evt.footY ?? 540);
+          const coinCount =
+            CONFIG.death.coinCountMin +
+            Math.floor(this.random() * (CONFIG.death.coinCountMax - CONFIG.death.coinCountMin + 1));
+          particleSystem.spawnRewardOrbs(
+            deadUnit.x,
+            evt.footY ?? 540,
+            killerTeam,
+            coinCount,
+            CONFIG.death.xpOrbCount
+          );
         }
 
         // Kiểm tra cơ chế hồi sinh System Reboot (30% cơ hội)
@@ -795,7 +979,14 @@ export class World {
           const dmg = proj.damagePercentMaxHp > 0 ? enemy.maxHp * proj.damagePercentMaxHp : proj.damage;
           this.recordDamage(dmg, proj.sourceTeam);
           enemy.takeDamage(dmg, proj.attackerType, null, (evt) => this.handleCombatEvent(evt));
-          this.addFloatingText(`-${Math.round(dmg)}`, enemy.x, enemy.y - 20, proj.isUltimateBarrage ? 0xfbbf24 : 0xf87171);
+          this.addDamageNumber(
+            dmg,
+            enemy.id,
+            enemy.x,
+            540 + (enemy.laneOffsetY || 0),
+            proj.sourceTeam,
+            proj.isUltimateBarrage
+          );
         }
       }
       if (!proj.isUltimateBarrage) {
@@ -844,7 +1035,14 @@ export class World {
 
       this.recordDamage(proj.damage, proj.sourceTeam);
       hitUnit.takeDamage(proj.damage, proj.attackerType, null, (evt) => this.handleCombatEvent(evt));
-      this.addFloatingText(`-${Math.round(proj.damage)}`, hitUnit.x, hitUnit.y - 20, 0xf87171);
+      this.addDamageNumber(
+        proj.damage,
+        hitUnit.id,
+        hitUnit.x,
+        540 + (hitUnit.laneOffsetY || 0),
+        proj.sourceTeam,
+        false
+      );
     } else {
       // Nếu đạn bay trúng Căn cứ
       if (proj.sourceTeam === 'LEFT' && (Math.abs(proj.x - this.baseRightX) <= 90 || proj.x >= this.baseRightX)) {
@@ -1237,7 +1435,7 @@ export class World {
       }
 
       if (!this.isHeadless) {
-        particleSystem.triggerUltimateIntro(result.name, ageMgr.getConfig().themeColor);
+        // Chỉ rung màn hình khi tung Chiêu cuối, không che màn hình bằng banner/ảnh intro
       }
 
       if (result.glitchScreen) {
@@ -1296,7 +1494,8 @@ export class World {
       520,
       dmgMult,
       hpMult,
-      lvl
+      lvl,
+      !this.isHeadless
     );
     list.push(unit);
 
@@ -1310,17 +1509,95 @@ export class World {
     return unit;
   }
 
+  private acquireFloatingText(): FloatingText {
+    const slot = this.floatingTextPool.pop();
+    if (slot) return slot;
+    const oldest = this.floatingTexts.shift();
+    if (oldest) return oldest;
+    return World.blankFloatingText();
+  }
+
+  /**
+   * Hạng mục 3: Sinh số sát thương pooled (tối đa 30), tự gộp cùng target trong 150ms,
+   * bay lên 35px ease-out trong 700ms, pop scale 1.4 -> 1.0 trong 120ms đầu.
+   */
+  public addDamageNumber(
+    amount: number,
+    targetKey: string,
+    worldX: number,
+    footRenderY: number,
+    attackerTeam: Team,
+    isCrit: boolean = false
+  ): void {
+    const rounded = Math.round(amount);
+    if (rounded <= 0) return;
+
+    const mergeWindowSec = CONFIG.damageNumber.mergeWindowMs / 1000;
+    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+      const ft = this.floatingTexts[i]!;
+      if (ft.active && ft.targetKey === targetKey && ft.duration <= mergeWindowSec) {
+        ft.damageAmount = (ft.damageAmount || 0) + amount;
+        ft.isCrit = ft.isCrit || isCrit;
+        ft.text = `-${Math.round(ft.damageAmount)}${ft.isCrit ? '!' : ''}`;
+        if (ft.isCrit) {
+          ft.color = attackerTeam === 'LEFT' ? CONFIG.damageNumber.dealtCritColor : CONFIG.damageNumber.receivedColor;
+          ft.strokeWidth = 5;
+        }
+        ft.startY = ft.y;
+        ft.duration = 0;
+        ft.scale = CONFIG.damageNumber.popStartScale;
+        return;
+      }
+    }
+
+    const ft = this.acquireFloatingText();
+    const jitterX = (this.random() * 2 - 1) * CONFIG.damageNumber.jitterXPx;
+    const headY = footRenderY - CONFIG.damageNumber.headOffsetYPx;
+    const color =
+      attackerTeam === 'LEFT'
+        ? isCrit
+          ? CONFIG.damageNumber.dealtCritColor
+          : CONFIG.damageNumber.dealtColor
+        : CONFIG.damageNumber.receivedColor;
+
+    ft.id = `dmg_${this.nextTextId++}`;
+    ft.text = `-${rounded}${isCrit ? '!' : ''}`;
+    ft.x = worldX + jitterX;
+    ft.startY = headY;
+    ft.y = headY;
+    ft.color = color;
+    ft.duration = 0;
+    ft.maxDuration = CONFIG.damageNumber.lifetimeMs / 1000;
+    ft.vy = 0;
+    ft.risePx = CONFIG.damageNumber.risePx;
+    ft.scale = CONFIG.damageNumber.popStartScale;
+    ft.isCrit = isCrit;
+    ft.targetKey = targetKey;
+    ft.damageAmount = amount;
+    ft.strokeWidth = isCrit ? 5 : 4;
+    ft.active = true;
+    this.floatingTexts.push(ft);
+  }
+
   public addFloatingText(text: string, x: number, y: number, color: number): void {
-    this.floatingTexts.push({
-      id: `ft_${Date.now()}_${this.random()}`,
-      text,
-      x,
-      y,
-      color,
-      duration: 0,
-      maxDuration: 1.0,
-      vy: -35,
-    });
+    const ft = this.acquireFloatingText();
+    ft.id = `ft_${this.nextTextId++}`;
+    ft.text = text;
+    ft.x = x;
+    ft.startY = y;
+    ft.y = y;
+    ft.color = color;
+    ft.duration = 0;
+    ft.maxDuration = 1.0;
+    ft.vy = -35;
+    ft.risePx = 0;
+    ft.scale = 1.0;
+    ft.isCrit = false;
+    ft.targetKey = undefined;
+    ft.damageAmount = undefined;
+    ft.strokeWidth = 4;
+    ft.active = true;
+    this.floatingTexts.push(ft);
   }
 
   public get frontlineX(): number {
@@ -1409,11 +1686,52 @@ export class World {
     };
   }
 
-  private notifySubscribers(): void {
+  private computeHudSignature(): string {
+    const pq = this.playerEconomy.spawnQueue;
+    const bq = this.botEconomy.spawnQueue;
+    const pFirst = pq[0];
+    const bFirst = bq[0];
+    const pUlti = Math.round(this.playerUltimate.getCooldownPercent(this.playerAge.currentAge) * 40);
+    const bUlti = Math.round(this.botUltimate.getCooldownPercent(this.botAge.currentAge) * 40);
+    const pQStr = pFirst ? `${pq.length}:${pFirst.config.id}:${Math.round((pFirst.progress / pFirst.duration) * 24)}` : '0';
+    const bQStr = bFirst ? `${bq.length}:${bFirst.config.id}:${Math.round((bFirst.progress / bFirst.duration) * 24)}` : '0';
+    const restartSec = this.autoRestartTimer !== null ? Math.ceil(this.autoRestartTimer) : -1;
+    return [
+      this.status,
+      this.gameMode,
+      Math.floor(this.matchTime),
+      Math.round(this.playerBaseHp),
+      Math.round(this.botBaseHp),
+      Math.floor(this.playerEconomy.gold),
+      Math.floor(this.playerEconomy.xp),
+      Math.floor(this.botEconomy.gold),
+      Math.floor(this.botEconomy.xp),
+      this.playerUnits.length,
+      this.botUnits.length,
+      this.playerAge.currentAge,
+      this.botAge.currentAge,
+      this.playerUpgrades.turretLevel,
+      this.botUpgrades.turretLevel,
+      this.playerTurrets.slots.length,
+      this.botTurrets.slots.length,
+      pUlti,
+      bUlti,
+      pQStr,
+      bQStr,
+      restartSec,
+    ].join('|');
+  }
+
+  private notifySubscribers(precomputedSig?: string): void {
+    this.lastHudSignature = precomputedSig ?? this.computeHudSignature();
     if (this.subscribers.length === 0) return;
+    const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
     const snap = this.getSnapshot();
     for (const sub of this.subscribers) {
       sub(snap);
+    }
+    if (this.onHudNotifyMeasured && typeof performance !== 'undefined') {
+      this.onHudNotifyMeasured(1, performance.now() - t0);
     }
   }
 }

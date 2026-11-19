@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { LANE_WIDTH } from './data/ages';
 import { audioSynth } from './engine/AudioSynth';
 import { GameLoop } from './engine/GameLoop';
 import { NetworkSync } from './engine/NetworkSync';
 import { GameRenderer } from './engine/Renderer';
 import { World, type WorldSnapshot } from './engine/World';
+import { CONFIG } from './data/combatFeelConfig';
 import { gameSettings } from './data/settings';
 import { LiveEventManager } from './live/LiveEventSource';
 import { HUD } from './ui/HUD';
@@ -40,6 +42,10 @@ export const App: React.FC = () => {
     const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
     return params.get('mode') === 'preview' || (typeof window !== 'undefined' && window.location.pathname.includes('/preview'));
   });
+  const [showDebug, setShowDebug] = useState<boolean>(false);
+  const showDebugRef = useRef<boolean>(false);
+  const f3BodyRef = useRef<HTMLPreElement | null>(null);
+  showDebugRef.current = showDebug;
 
   useEffect(() => {
     let isCancelled = false;
@@ -77,9 +83,16 @@ export const App: React.FC = () => {
 
       const renderer = new GameRenderer(world);
       rendererRef.current = renderer;
-      if (typeof window !== 'undefined') {
+      renderer.playerControlledTeam =
+        initialMode === 'online2p' && netSync.role === 'GUEST' ? 'RIGHT' : 'LEFT';
+      if (typeof window !== 'undefined' && import.meta.env.DEV) {
         (window as any).__renderer = renderer;
       }
+
+      const unsubscribeNet = netSync.subscribe(() => {
+        renderer.playerControlledTeam =
+          world.gameMode === 'ONLINE_2P' && netSync.role === 'GUEST' ? 'RIGHT' : 'LEFT';
+      });
 
       void renderer.init(container, isTransparent).then(() => {
         if (isCancelled) {
@@ -87,13 +100,76 @@ export const App: React.FC = () => {
           return;
         }
 
+        // Bộ đệm đối chiếu giá trị cũ để dồn ghi DOM 1 lần cuối frame (chỉ chạm DOM khi đổi giá trị)
+        let minimapFrontEl: HTMLElement | null = null;
+        let minimapCamEl: HTMLElement | null = null;
+        let prevFrontPx = -1;
+        let prevCamPx = -1;
+        let prevF3Text = '';
+        let lastF3UpdateMs = 0;
+
         const loop = new GameLoop(
           (dt) => world.update(dt),
-          (interp) => renderer.render(interp)
+          (interp, frameDt) => renderer.render(interp, frameDt),
+          () => {
+            let touches = 0;
+            if (!minimapFrontEl || !minimapFrontEl.isConnected) {
+              minimapFrontEl = document.querySelector('[data-hud-role="minimap-frontline"]');
+            }
+            if (!minimapCamEl || !minimapCamEl.isConnected) {
+              minimapCamEl = document.querySelector('[data-hud-role="minimap-cam"]');
+            }
+
+            const frontPx = Math.round((world.frontlineX / LANE_WIDTH) * 360);
+            if (minimapFrontEl && frontPx !== prevFrontPx) {
+              prevFrontPx = frontPx;
+              minimapFrontEl.style.transform = `translate3d(${frontPx}px, 0, 0)`;
+              touches++;
+            }
+
+            const camPx = Math.round((renderer.cameraX / LANE_WIDTH) * 360);
+            if (minimapCamEl && camPx !== prevCamPx) {
+              prevCamPx = camPx;
+              minimapCamEl.style.transform = `translate3d(${camPx}px, 0, 0)`;
+              touches++;
+            }
+
+            if (showDebugRef.current && f3BodyRef.current) {
+              const nowMs = performance.now();
+              if (nowMs - lastF3UpdateMs >= 120 || prevF3Text === '') {
+                lastF3UpdateMs = nowMs;
+                const p = loop.perfStats;
+                const rs = renderer.getDebugStats();
+                const txt =
+                  `FPS: ${Math.round(p.fps)} | Frame: ${p.frameTimeMs.toFixed(2)} ms\n` +
+                  `Logic: ${p.logicTimeMs.toFixed(2)} ms | Render: ${p.renderTimeMs.toFixed(2)} ms | HUD/DOM: ${p.hudDomTimeMs.toFixed(2)} ms\n` +
+                  `DOM/frame: ${p.domTouchesPerFrame} | GC pause: ${p.gcPauseMs.toFixed(2)} ms | Steps bù: ${p.simSteps}/${CONFIG.loop.maxStepsPerFrame} (Drop: ${p.droppedSteps})\n` +
+                  `Entities: ${rs.entities} (U:${rs.units} P:${rs.projectiles}) | Dmg: ${rs.floatingTexts}\n` +
+                  `Hạt: ${rs.particles}/${rs.maxParticles} | Slash: ${rs.slashes} | Orb: ${rs.rewardOrbs}/${CONFIG.death.orbPoolSize} | VRAM: ${rs.vramMb.toFixed(2)} MB`;
+                if (txt !== prevF3Text) {
+                  prevF3Text = txt;
+                  f3BodyRef.current.textContent = txt;
+                  touches++;
+                }
+              }
+            } else if (!showDebugRef.current && prevF3Text !== '') {
+              prevF3Text = '';
+            }
+
+            if (touches > 0) {
+              loop.recordDomUpdate(touches, 0);
+            }
+          }
         );
+        world.onHudNotifyMeasured = (touches, ms) => {
+          loop.recordDomUpdate(touches, ms);
+        };
         loopRef.current = loop;
         loop.start();
       });
+
+      // Lưu cleanup cho subscription mạng
+      (renderer as any)._unsubNet = unsubscribeNet;
     }
 
     // Khởi tạo và phát nhạc nền BGM
@@ -104,8 +180,13 @@ export const App: React.FC = () => {
     // P1 (Phe Trái - Xanh): [1-4], [Space] Ulti, [E] Lên Thời Kỳ
     // P2 (Phe Phải - Đỏ): [Numpad 1-4] hoặc [J, K, L, ;], [Enter] Ulti, [O] Lên Thời Kỳ
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Bỏ qua nếu đang gõ input hoặc trận đấu chưa ở trạng thái PLAYING
+      // Bỏ qua nếu đang gõ input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === CONFIG.loop.debugToggleKey) {
+        e.preventDefault();
+        setShowDebug((prev) => !prev);
+        return;
+      }
       if (world.status !== 'PLAYING') return;
 
       const playerAgeConfig = world.playerAge.getConfig();
@@ -194,7 +275,9 @@ export const App: React.FC = () => {
       audioSynth.pauseBGM();
       window.removeEventListener('keydown', handleKeyDown);
       unsubscribe();
+      world.onHudNotifyMeasured = undefined;
       loopRef.current?.stop();
+      (rendererRef.current as any)?._unsubNet?.();
       rendererRef.current?.destroy();
       rendererRef.current = null;
       netSync.disconnect();
@@ -329,6 +412,46 @@ export const App: React.FC = () => {
             }
           }}
         />
+      )}
+
+      {/* Bảng Debug Hiệu Năng Mở Rộng (Phím F3 — Dồn ghi DOM 1 lần cuối frame, 0 React re-render) */}
+      {showDebug && (
+        <div
+          data-testid="f3-debug-panel"
+          style={{
+            position: 'fixed',
+            top: '86px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 9999,
+            pointerEvents: 'none',
+            background: 'rgba(10, 14, 24, 0.90)',
+            border: '1px solid rgba(56, 189, 248, 0.55)',
+            borderRadius: '8px',
+            padding: '8px 14px',
+            fontFamily: 'Consolas, Menlo, monospace',
+            fontSize: '12px',
+            lineHeight: 1.5,
+            color: '#e2e8f0',
+            minWidth: '410px',
+          }}
+        >
+          <div style={{ color: '#38bdf8', fontWeight: 700, marginBottom: '2px' }}>
+            DEBUG F3 ({CONFIG.loop.fixedHz}Hz Fixed • Max {CONFIG.loop.maxStepsPerFrame} Steps/Frame)
+          </div>
+          <pre
+            ref={f3BodyRef}
+            style={{
+              margin: 0,
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              lineHeight: 'inherit',
+              whiteSpace: 'pre',
+            }}
+          >
+            {`FPS: -- | Frame: -- ms\nLogic: -- ms | Render: -- ms | HUD/DOM: -- ms\nDOM/frame: 0 | GC pause: 0.00 ms | Steps bù: 0/${CONFIG.loop.maxStepsPerFrame}`}
+          </pre>
+        </div>
       )}
     </div>
   );

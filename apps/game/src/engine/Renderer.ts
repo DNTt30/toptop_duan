@@ -11,15 +11,48 @@
  * - Màn giới thiệu Ultimate 0.8s hoành tráng
  */
 
-import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { Application, Assets, Container, Graphics, Rectangle, Sprite, Text, Texture } from 'pixi.js';
 import { BACKGROUNDS_DATA, type BackgroundConfig } from '../data/backgrounds';
 import { AGES_DATA, BASE_MAX_HP, LANE_WIDTH, type Team } from '../data/ages';
+import { CONFIG } from '../data/combatFeelConfig';
 import { getSpriteConfig, type SpriteConfig } from '../data/sprites';
-import { particleSystem } from './ParticleSystem';
+import { particleSystem, ParticleSystem } from './ParticleSystem';
 import { spriteLoader } from './SpriteLoader';
 import { gameSettings, STORAGE_KEYS } from '../data/settings';
+import { graphicsSettings } from '../data/graphicsSettings';
 import { type Unit } from './Unit';
 import { type World } from './World';
+
+/** Trạng thái hiệu ứng riêng từng lính (WeakMap tự giải phóng khi lính bị hủy) */
+interface UnitFxState {
+  lastStep: number;
+  lastAttackProgress: number;
+  visualSepOffset: number;
+  smoothLunge: number;
+  smoothRecoil: number;
+}
+
+interface TextSlotMeta {
+  text: string;
+  fill: number;
+  fontSize: number;
+  strokeW: number;
+}
+
+export interface RendererDebugStats {
+  units: number;
+  projectiles: number;
+  floatingTexts: number;
+  particles: number;
+  maxParticles: number;
+  slashes: number;
+  rewardOrbs: number;
+  entities: number;
+  vramMb: number;
+}
+
+/** Màu vệt dư ảnh theo phe */
+const TEAM_GHOST_COLOR: Record<Team, number> = { LEFT: 0x7dd3fc, RIGHT: 0xfca5a5 };
 
 export class GameRenderer {
   private app: Application | null = null;
@@ -60,13 +93,61 @@ export class GameRenderer {
   private projGraphics: Graphics = new Graphics();
   private particleGraphics: Graphics = new Graphics();
   private fxContainer: Container = new Container();
+
+  // ===== 4 LỚP LAYOUT CHIẾN ĐẤU (1: Mưa thiên thạch -> 2: Quân -> 3: Cây cối -> 4: Trời mây) =====
+  private layer4SkyContainer: Container = new Container();
+  private skySprite: Sprite = new Sprite();
+  private skyTextureCache: Map<number, Texture> = new Map();
+  private cloudsContainer: Container = new Container();
+  private cloudSprites: Sprite[] = [];
+  private cloudTextureCache: Map<number, Texture> = new Map();
+  private cloudsCachedAge: number = -1;
+  private cloudsData: Array<{ x: number; y: number; scale: number; speed: number; alpha: number; phase: number }> = [];
+  private layer3TreesContainer: Container = new Container();
+  private bgDimOverlay: Graphics = new Graphics();
+  private layer2UnitsContainer: Container = new Container();
+  private playerArrowGraphics: Graphics = new Graphics();
+  private layer1MeteorContainer: Container = new Container();
+  private meteorGlowGraphics: Graphics = new Graphics();
+  private meteorGraphics: Graphics = new Graphics();
+
+  // ===== GIAI ĐOẠN A & GAME FEEL: Bóng đổ mềm, Phát sáng Additive, White Flash Cache, Slash 3 biến thể, Xu/XP Bezier =====
+  /** Lớp bóng đổ nằm DƯỚI nhân vật & thành trì */
+  private shadowGraphics: Graphics = new Graphics();
+  /** Lớp phát sáng (blendMode 'add') cho hạt & đạn */
+  private particleGlowGraphics: Graphics = new Graphics();
+  private projGlowGraphics: Graphics = new Graphics();
+  /** Sprite vệt chém Slash VFX (3 biến thể, additive) */
+  private slashContainer: Container = new Container();
+  private slashSpritePool: Sprite[] = [];
+  private slashTextures: Texture[] = [];
+  /** Offscreen white flash cache (chớp trắng 80ms khi bị đánh) */
+  private whiteFlashTexCache: Map<Texture, Texture> = new Map();
+  /** Sprite chồng tạo chớp trắng thật khi trúng đòn */
+  private unitFlashContainer: Container = new Container();
+  private unitFlashPool: Sprite[] = [];
+  /** Sprite vệt dư ảnh khi lao tới chém */
+  private ghostContainer: Container = new Container();
+  private ghostPool: Sprite[] = [];
+  /** Xu vàng & Orb XP bay theo đường cong Bezier về HUD (tọa độ màn hình 1280x720) */
+  private rewardOrbGraphics: Graphics = new Graphics();
+  /** Cache key để không vẽ lại baseGraphics mỗi frame khi HP/tuổi không đổi */
+  private lastBaseRenderKey: string = '';
+  /** Phe của người chơi hiện tại (mặc định LEFT, GUEST online là RIGHT) */
+  public playerControlledTeam: Team = 'LEFT';
+  /** Lóe sáng toàn màn hình & vệt tốc độ chiêu cuối */
+  private screenFlashGraphics: Graphics = new Graphics();
+  private ultimateFxGraphics: Graphics = new Graphics();
+  private unitFx: WeakMap<Unit, UnitFxState> = new WeakMap();
+  private ambientTimer: number = 0;
   private glitchGraphics: Graphics = new Graphics();
   private ultimateIntroGraphics: Graphics = new Graphics();
   private ultimateIntroText: Text | null = null;
   private glitchBannerText: Text | null = null;
 
-  // Text Pool tái sử dụng
+  // Text Pool tái sử dụng + metadata dirty-check để tránh re-rasterize chữ mỗi frame
   private textPool: Text[] = [];
+  private textPoolMeta: TextSlotMeta[] = [];
 
   // Viewport thiết kế
   public readonly V_WIDTH = 1280;
@@ -102,11 +183,17 @@ export class GameRenderer {
   // Quản lý thời kỳ & hiệu ứng
   private activeAgeId: number = 1;
   private prevAgeId: number = 1;
+  private botPreloadedAge: number = 1;
+  private hasPanoramaActive: boolean = false;
   private flagWavePhase: number = 0;
   private smokePhase: number = 0;
 
   // Bản đồ lưu tên người gọi lính (viewer chat name) hiển thị 3s
   private summonerLabels: Map<string, { name: string; timer: number }> = new Map();
+
+  // Bộ đệm tái sử dụng mỗi frame để không cấp phát mảng mới (chống GC pause)
+  private readonly sepUnitsBuf: Unit[] = [];
+  private readonly sortedUnitsBuf: Unit[] = [];
 
   // Debug overlays cho Hitbox & Foot Anchor
   public showHitboxes: boolean = false;
@@ -125,7 +212,13 @@ export class GameRenderer {
       antialias: false,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
       autoDensity: true,
+      autoStart: false,
     });
+    // Dừng ticker tự động của PixiJS vì GameLoop 60Hz chủ động điều phối app.render() mỗi frame
+    if (this.app.ticker) {
+      this.app.ticker.autoStart = false;
+      this.app.ticker.stop();
+    }
 
     this.app.canvas.style.display = 'block';
     this.app.canvas.style.width = '100%';
@@ -150,30 +243,68 @@ export class GameRenderer {
       this.panoramaContainer.addChild(s);
     }
 
-    this.currentBgContainer.addChild(this.skyGraphics);
-    this.currentBgContainer.addChild(this.farMountainGraphics);
-    this.currentBgContainer.addChild(this.panoramaContainer);
-    this.currentBgContainer.addChild(this.midLandmarkGraphics);
+    this.currentBgContainer.addChild(this.layer4SkyContainer);
+    this.currentBgContainer.addChild(this.layer3TreesContainer);
+
+    this.skySprite.visible = false;
+    this.layer4SkyContainer.addChild(this.skySprite);
+    this.layer4SkyContainer.addChild(this.skyGraphics);
+    this.layer4SkyContainer.addChild(this.cloudsContainer);
+    this.layer4SkyContainer.addChild(this.farMountainGraphics);
+    this.initAnimatedClouds();
+
+    this.layer3TreesContainer.addChild(this.panoramaContainer);
+    this.layer3TreesContainer.addChild(this.midLandmarkGraphics);
 
     this.rootContainer.addChild(this.prevBgContainer);
     this.rootContainer.addChild(this.currentBgContainer);
+    this.rootContainer.addChild(this.bgDimOverlay);
     this.rootContainer.addChild(this.worldContainer);
+    this.rootContainer.addChild(this.rewardOrbGraphics);
     this.rootContainer.addChild(this.glitchGraphics);
+    this.rootContainer.addChild(this.screenFlashGraphics);
     this.rootContainer.addChild(this.ultimateIntroGraphics);
 
+    // Vệt tốc độ chiêu cuối nằm giữa lớp phủ tối và chữ tên chiêu
+    this.ultimateFxGraphics.blendMode = 'add';
+    this.ultimateIntroGraphics.addChild(this.ultimateFxGraphics);
+
+    // Lớp phát sáng cộng màu & vệt chém Slash VFX additive
+    this.particleGlowGraphics.blendMode = 'add';
+    this.projGlowGraphics.blendMode = 'add';
+    this.meteorGlowGraphics.blendMode = 'add';
+    this.slashContainer.blendMode = 'add';
+    this.initSlashTextures();
+
+    // Lớp 3 (Mặt đất thuộc cây cối / địa hình)
     this.worldContainer.addChild(this.groundGraphics);
-    this.worldContainer.addChild(this.frontlineGraphics);
-    this.worldContainer.addChild(this.baseLeftSprite);
-    this.worldContainer.addChild(this.baseRightSprite);
-    this.worldContainer.addChild(this.baseGraphics);
-    this.worldContainer.addChild(this.turretGraphics);
-    this.worldContainer.addChild(this.turretSpriteContainer);
-    this.worldContainer.addChild(this.unitSpriteContainer);
-    this.worldContainer.addChild(this.customWeaponSpriteContainer);
-    this.worldContainer.addChild(this.unitGraphics);
-    this.worldContainer.addChild(this.projGraphics);
-    this.worldContainer.addChild(this.particleGraphics);
-    this.worldContainer.addChild(this.fxContainer);
+
+    // Lớp 2: Quân (Bóng đổ, mũi tên xanh người chơi, thành trì, tháp canh, dư ảnh, nhân vật, white flash)
+    this.layer2UnitsContainer.addChild(this.shadowGraphics);
+    this.layer2UnitsContainer.addChild(this.playerArrowGraphics);
+    this.layer2UnitsContainer.addChild(this.frontlineGraphics);
+    this.layer2UnitsContainer.addChild(this.baseLeftSprite);
+    this.layer2UnitsContainer.addChild(this.baseRightSprite);
+    this.layer2UnitsContainer.addChild(this.baseGraphics);
+    this.layer2UnitsContainer.addChild(this.turretGraphics);
+    this.layer2UnitsContainer.addChild(this.turretSpriteContainer);
+    this.layer2UnitsContainer.addChild(this.ghostContainer);
+    this.layer2UnitsContainer.addChild(this.unitSpriteContainer);
+    this.layer2UnitsContainer.addChild(this.unitFlashContainer);
+    this.layer2UnitsContainer.addChild(this.customWeaponSpriteContainer);
+    this.layer2UnitsContainer.addChild(this.unitGraphics);
+    this.worldContainer.addChild(this.layer2UnitsContainer);
+
+    // Lớp 1 (Trên cùng): Đạn đạo, Hạt nổ, Slash VFX 3 biến thể, Chữ sát thương & Mưa Thiên Thạch
+    this.layer1MeteorContainer.addChild(this.projGlowGraphics);
+    this.layer1MeteorContainer.addChild(this.projGraphics);
+    this.layer1MeteorContainer.addChild(this.particleGraphics);
+    this.layer1MeteorContainer.addChild(this.particleGlowGraphics);
+    this.layer1MeteorContainer.addChild(this.slashContainer);
+    this.layer1MeteorContainer.addChild(this.fxContainer);
+    this.layer1MeteorContainer.addChild(this.meteorGlowGraphics);
+    this.layer1MeteorContainer.addChild(this.meteorGraphics);
+    this.worldContainer.addChild(this.layer1MeteorContainer);
 
     // Lắng nghe sự kiện kéo chuột/cảm ứng để xem chiến trường thủ công
     const canvas = this.app.canvas;
@@ -200,12 +331,13 @@ export class GameRenderer {
     // Tải trước textures đồ họa
     await this.preloadTextures();
 
-    // Khởi tạo Text Pool cho số sát thương và tên viewer
-    for (let i = 0; i < 45; i++) {
+    // Khởi tạo Text Pool cho số sát thương (30) + nhãn viewer (10) kèm metadata dirty-check
+    const totalTexts = CONFIG.damageNumber.poolSize + 10;
+    for (let i = 0; i < totalTexts; i++) {
       const t = new Text({
         text: '',
         style: {
-          fontSize: 18,
+          fontSize: CONFIG.damageNumber.baseFontSizePx,
           fontWeight: '900',
           fill: 0xffffff,
           stroke: { color: 0x000000, width: 4 },
@@ -214,6 +346,12 @@ export class GameRenderer {
       t.anchor.set(0.5);
       t.visible = false;
       this.textPool.push(t);
+      this.textPoolMeta.push({
+        text: '',
+        fill: 0xffffff,
+        fontSize: CONFIG.damageNumber.baseFontSizePx,
+        strokeW: 4,
+      });
       this.fxContainer.addChild(t);
     }
 
@@ -332,9 +470,8 @@ export class GameRenderer {
       })
     );
 
-    // Nạp trước Sprite Atlas Kỷ nguyên 1 và nạp nền toàn bộ 6 Kỷ nguyên
+    // Chỉ nạp sẵn Kỷ nguyên 1 khi khởi động (tiết kiệm >140MB VRAM GPU); các kỷ nguyên sau nạp lười khi tiến hóa
     await this.preloadAgeSprites(1);
-    void this.preloadAllAges();
   }
 
   /**
@@ -387,33 +524,31 @@ export class GameRenderer {
     this.rootContainer.scale.set(this.scaleFactor);
     this.rootContainer.x = this.baseContainerX;
     this.rootContainer.y = this.baseContainerY;
+    if (this.skySprite.visible) {
+      this.skySprite.y = this.isPortrait ? -400 : 0;
+      this.skySprite.height = this.isPortrait ? 860 : 460;
+    }
   }
 
   /**
-   * Vòng lặp render chính
+   * Vòng lặp render chính (điều phối trực tiếp từ GameLoop 60Hz, không chạy ticker trùng lặp)
    */
-  public render(interpolation: number = 1.0): void {
+  public render(interpolation: number = 1.0, realDt: number = CONFIG.loop.fixedStepSec): void {
     if (!this.app) return;
 
-    const dt = 1 / 60;
+    const dt = Math.min(CONFIG.loop.maxDeltaMs / 1000, Math.max(0.001, realDt));
     this.flagWavePhase += dt * 4;
     this.smokePhase += dt * 2;
 
-    // Cập nhật hệ thống hạt
-    particleSystem.update(dt);
-
-    // Cập nhật nhãn tên viewer
-    for (const [id, label] of this.summonerLabels.entries()) {
-      label.timer -= dt;
-      if (label.timer <= 0) {
-        this.summonerLabels.delete(id);
-      }
-    }
-
-    // 1. Kiểm tra chuyển Kỷ Nguyên để kích hoạt Crossfade 1.5s
+    // 1. Kiểm tra chuyển Kỷ Nguyên để kích hoạt Crossfade 1.5s & nạp lười sprite Bot khi Bot tiến hóa
     const currentAge = this.world.playerAge.currentAge;
     if (currentAge !== this.activeAgeId) {
       this.startBackgroundCrossfade(currentAge);
+    }
+    const currentBotAge = this.world.botAge.currentAge;
+    if (currentBotAge !== this.botPreloadedAge) {
+      this.botPreloadedAge = currentBotAge;
+      void this.preloadAgeSprites(currentBotAge);
     }
 
     // Cập nhật Crossfade timer
@@ -426,53 +561,497 @@ export class GameRenderer {
       }
     }
 
-    // 2. Rung lắc màn hình (Screen Shake)
-    if (particleSystem.screenShakeEnabled && this.world.screenShake > 0) {
-      const shakeAmt = this.world.screenShake * 4.0;
+    // 2. Rung lắc màn hình mượt (nhiễu đa tần + micro shake 2-3px khi kill/nặng)
+    const shake = particleSystem.getShakeOffset(this.world.screenShake);
+    if (shake.x !== 0 || shake.y !== 0 || shake.rot !== 0) {
+      const cx = this.V_WIDTH / 2;
+      const cy = this.V_HEIGHT / 2;
+      this.rootContainer.pivot.set(cx, cy);
+      this.rootContainer.rotation = shake.rot;
       this.rootContainer.position.set(
-        this.baseContainerX + (Math.random() - 0.5) * shakeAmt,
-        this.baseContainerY + (Math.random() - 0.5) * shakeAmt
+        this.baseContainerX + (cx + shake.x) * this.scaleFactor,
+        this.baseContainerY + (cy + shake.y) * this.scaleFactor
       );
     } else {
+      this.rootContainer.pivot.set(0, 0);
+      this.rootContainer.rotation = 0;
       this.rootContainer.position.set(this.baseContainerX, this.baseContainerY);
     }
 
-    // 2.5 Cập nhật Camera theo Tiền Tuyến (Lọc rung mượt mà)
+    // 2.5 Cập nhật Camera theo Tiền Tuyến & đồng bộ cameraX cho Reward Orbs bay về HUD
     this.updateCamera(dt);
-
-    // Di chuyển thế giới theo Camera (pixel-snap khi bật pixel mode)
     const worldCamX = this.isPixelMode ? Math.round(this.cameraX) : this.cameraX;
     this.worldContainer.position.set(-worldCamX, 0);
+    particleSystem.cameraX = worldCamX;
 
-    // Hiệu ứng Parallax cho các lớp nền
-    this.skyGraphics.position.set(-worldCamX * 0.05, 0);
-    this.farMountainGraphics.position.set(-worldCamX * 0.20, 0);
-    this.midLandmarkGraphics.position.set(-worldCamX * 0.45, 0);
-    this.panoramaContainer.x = -worldCamX * 0.45;
+    // Cập nhật hệ thống hạt, Slash VFX & Xu/Orb XP bay Bezier
+    particleSystem.update(dt);
 
-    // 3. Vẽ Chỉ báo Tiền Tuyến (Frontline Indicator)
-    this.drawFrontlineIndicator();
+    // Cập nhật nhãn tên viewer
+    for (const [id, label] of this.summonerLabels.entries()) {
+      label.timer -= dt;
+      if (label.timer <= 0) {
+        this.summonerLabels.delete(id);
+      }
+    }
 
-    // 4. Vẽ Căn cứ Khổng lồ 260x220px + 3 ô Tháp canh
+    // Hiệu ứng Parallax theo CONFIG: Lớp 4 Trời mây trôi nhẹ, Lớp 3 Cây cối
+    const skyParallaxX = -worldCamX * CONFIG.contrastAndBg.parallaxSkyFactor;
+    this.skySprite.x = -160 + skyParallaxX;
+    this.skyGraphics.position.set(skyParallaxX, 0);
+    this.updateAndDrawClouds(dt, worldCamX);
+    this.farMountainGraphics.position.set(-worldCamX * CONFIG.contrastAndBg.parallaxFarFactor, 0);
+    this.midLandmarkGraphics.position.set(-worldCamX * CONFIG.contrastAndBg.parallaxMidFactor, 0);
+    this.panoramaContainer.x = -worldCamX * CONFIG.contrastAndBg.parallaxMidFactor;
+    for (let i = 0; i < this.panoramaBgSprites.length; i++) {
+      const sp = this.panoramaBgSprites[i]!;
+      const tileLeft = sp.x + this.panoramaContainer.x;
+      sp.visible = this.hasPanoramaActive && tileLeft < this.V_WIDTH + 64 && tileLeft + 1426 > -64;
+    }
+
+    // 3. Xóa chỉ báo frontline chung ở giữa đường (đã chuyển sang mũi tên xanh dưới chân từng lính P1)
+    this.frontlineGraphics.clear();
+
+    // 3.5 Bóng đổ mềm của thành trì & đạn bay
+    this.shadowGraphics.clear();
+    this.drawStaticShadows(interpolation);
+
+    // 3.6 Hạt tàn lửa / môi trường theo kỷ nguyên (CONFIG.contrastAndBg.enableEmbers)
+    this.updateAmbientParticles(dt);
+
+    // 4. Vẽ Căn cứ Khổng lồ + 3 ô Tháp canh (cache theo dirty key)
     this.drawBasesAndTurrets();
 
-    // 5. Vẽ Nhân vật Chibi to 90-110px (Nội suy mượt 10/10)
+    // 5. Vẽ Nhân vật Chibi (Nội suy + White Flash cache + Ghost HP + Mũi tên xanh P1)
     this.drawChibiUnitsBatch(interpolation);
 
-    // 6. Vẽ Đạn đạo (Nội suy mượt 10/10)
+    // 6. Vẽ Đạn đạo (Nội suy)
     this.drawProjectiles(interpolation);
 
-    // 7. Vẽ Hạt chiến đấu (Sparks, Explosions, Trails, Death Stars)
+    // 7. Vẽ Hạt chiến đấu & Slash VFX 3 biến thể tại điểm chạm
     this.drawParticles();
+    this.drawSlashVfx();
 
-    // 8. Vẽ Chữ sát thương & Nhãn Viewer
+    // 8. Vẽ Xu vàng & Orb XP bay cong Bezier về HUD
+    this.drawRewardOrbs();
+
+    // 9. Vẽ Chữ sát thương & Nhãn Viewer (cached style)
     this.drawFloatingLabels();
 
-    // 9. Giới thiệu Ultimate 0.8s
+    // 10. Giới thiệu Ultimate 0.8s & Glitch Matrix & Lóe sáng
     this.drawUltimateIntro();
-
-    // 10. Glitch Matrix nếu có
     this.drawGlitchEffect();
+    this.drawScreenFlash();
+
+    // Render 1 lần duy nhất mỗi frame do GameLoop điều phối
+    this.app.render();
+  }
+
+  // ==========================================
+  // GIAI ĐOẠN A — BÓNG ĐỔ MỀM, HẠT MÔI TRƯỜNG, LÓE MÀN HÌNH
+  // ==========================================
+
+  /**
+   * Bóng elip mềm 3 lớp (lớp ngoài rộng & nhạt, lõi nhỏ & đậm) — giả lập gradient không tốn shader.
+   */
+  private drawSoftShadow(g: Graphics, x: number, y: number, w: number, h: number, alpha: number): void {
+    if (alpha <= 0.01 || w <= 0 || h <= 0) return;
+    g.ellipse(x, y, w * 1.28, h * 1.4).fill({ color: 0x000000, alpha: alpha * 0.22 });
+    g.ellipse(x, y, w, h).fill({ color: 0x000000, alpha: alpha * 0.38 });
+    g.ellipse(x, y, w * 0.62, h * 0.58).fill({ color: 0x000000, alpha: alpha * 0.5 });
+  }
+
+  /** Bóng thành trì 2 bên + bóng đạn bay chiếu xuống mặt đường */
+  private drawStaticShadows(interpolation: number): void {
+    if (!graphicsSettings.get().shadows) return;
+    const g = this.shadowGraphics;
+
+    // Thành trì: bóng rộng, lệch nhẹ theo hướng nắng (nắng chiếu từ trên-phải)
+    this.drawSoftShadow(g, this.BASE_LEFT_X - 10, this.GROUND_Y + 5, 140, 15, 0.85);
+    this.drawSoftShadow(g, this.BASE_RIGHT_X - 10, this.GROUND_Y + 5, 140, 15, 0.85);
+
+    // Đạn bay: bóng thu nhỏ & nhạt dần theo độ cao
+    const interp = Math.max(0, Math.min(1.0, interpolation));
+    for (const proj of this.world.projectilePool.getActive()) {
+      const px = proj.prevX !== undefined ? proj.prevX + (proj.x - proj.prevX) * interp : proj.x;
+      const py = proj.prevY !== undefined ? proj.prevY + (proj.y - proj.prevY) * interp : proj.y;
+      const height = Math.max(0, this.GROUND_Y - py);
+      const k = Math.max(0.25, 1 - height / 420);
+      const r = Math.max(3, proj.radius) * 1.4;
+      this.drawSoftShadow(g, px, this.GROUND_Y + 4, r * k, r * 0.32 * k, 0.6 * k);
+    }
+  }
+
+  /** Thả hạt môi trường (tàn lửa / bụi nắng / tro / hạt dữ liệu) quanh khung camera */
+  private updateAmbientParticles(dt: number): void {
+    if (!CONFIG.contrastAndBg.enableEmbers) return;
+    this.ambientTimer -= dt;
+    if (this.ambientTimer > 0) return;
+    this.ambientTimer = CONFIG.contrastAndBg.emberIntervalMs / 1000;
+    if (particleSystem.freeCount < 380) return;
+    const age = this.activeAgeId;
+    const x = this.cameraX + Math.random() * this.V_WIDTH;
+    const y = age === 1 ? this.GROUND_Y - 4 - Math.random() * 30 : 120 + Math.random() * (this.GROUND_Y - 160);
+    particleSystem.spawnAmbient(x, y, age);
+  }
+
+  private drawScreenFlash(): void {
+    const g = this.screenFlashGraphics;
+    g.clear();
+    const f = particleSystem.screenFlash;
+    if (f.alpha <= 0.005) return;
+    g.rect(-2400, -2400, this.V_WIDTH + 4800, this.V_HEIGHT + 4800).fill({ color: f.color, alpha: f.alpha });
+  }
+
+  /**
+   * Thống kê hiệu năng phục vụ bảng debug F3
+   */
+  public getDebugStats(): RendererDebugStats {
+    const units = this.world.playerUnits.length + this.world.botUnits.length;
+    const projectiles = this.world.projectilePool.getActive().length;
+    const floatingTexts = this.world.floatingTexts.length;
+    const particles = particleSystem.activeParticles.length;
+    const slashes = particleSystem.activeSlashes.length;
+    const rewardOrbs = particleSystem.activeRewardOrbs.length;
+    return {
+      units,
+      projectiles,
+      floatingTexts,
+      particles,
+      maxParticles: ParticleSystem.MAX_PARTICLES,
+      slashes,
+      rewardOrbs,
+      entities: units + projectiles + floatingTexts,
+      vramMb: spriteLoader.getTotalVramUsageMb(),
+    };
+  }
+
+  /** Tạo Texture bầu trời & mặt trời cached trên Canvas2D (thay cho 33x overdraw polygon mỗi frame) */
+  private getSkyTexture(ageId: number, hasPano: boolean): Texture | null {
+    const cached = this.skyTextureCache.get(ageId);
+    if (cached) return cached;
+    if (typeof document === 'undefined') return null;
+
+    const bg = BACKGROUNDS_DATA[ageId] || BACKGROUNDS_DATA[1]!;
+    const p = bg.palette;
+    const panoPalettes: Record<number, { top: number; mid: number; horizon: number; glow: number }> = {
+      1: { top: 0x3b0d11, mid: 0x881c1a, horizon: 0xd9531e, glow: 0xf59e0b },
+      2: { top: 0x1e3a8a, mid: 0x2b77e6, horizon: 0x3ca1fb, glow: 0x93c5fd },
+      3: { top: 0x78350f, mid: 0xc26d27, horizon: 0xf8b258, glow: 0xfde68a },
+    };
+    const panoPal = hasPano ? panoPalettes[ageId] : null;
+    const toCss = (hex: number) => `#${hex.toString(16).padStart(6, '0')}`;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 820;
+    canvas.height = 230;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    // Khớp tỷ lệ 1:1 tại scale 2x (width = 1640, height = 460) vùng bầu trời y=[0..460], phủ kín cả cameraX max=3200
+    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    if (panoPal) {
+      grad.addColorStop(0.0, toCss(panoPal.top));
+      grad.addColorStop(0.45, toCss(panoPal.mid));
+      grad.addColorStop(0.8, toCss(panoPal.horizon));
+      grad.addColorStop(1.0, toCss(panoPal.glow));
+    } else {
+      grad.addColorStop(0.0, toCss(p.skyGradient[0]));
+      grad.addColorStop(1.0, toCss(p.skyGradient[1]));
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (p.sunMoonColor) {
+      const sunCx = (this.V_WIDTH * 0.62 - -160) * 0.5;
+      const sunCy = (panoPal ? 292 : 130) * 0.5;
+      const sunGrad = ctx.createRadialGradient(sunCx, sunCy, 12, sunCx, sunCy, 66);
+      sunGrad.addColorStop(0.0, 'rgba(254, 240, 138, 0.96)');
+      sunGrad.addColorStop(0.32, 'rgba(251, 191, 36, 0.85)');
+      sunGrad.addColorStop(0.55, 'rgba(245, 158, 11, 0.28)');
+      sunGrad.addColorStop(1.0, 'rgba(245, 158, 11, 0)');
+      ctx.fillStyle = sunGrad;
+      ctx.beginPath();
+      ctx.arc(sunCx, sunCy, 66, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (CONFIG.contrastAndBg.enableBgDim && hasPano) {
+      ctx.fillStyle = `rgba(9, 13, 22, ${CONFIG.contrastAndBg.bgDimAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    const tex = Texture.from(canvas);
+    if (tex.source) {
+      tex.source.scaleMode = 'nearest';
+    }
+    this.skyTextureCache.set(ageId, tex);
+    return tex;
+  }
+
+  /** Tạo texture mây cel-shaded trên offscreen canvas (cache 1 lần theo kỷ nguyên thay cho 170 ellipse/frame) */
+  private getCloudTexture(age: number): Texture | null {
+    const cached = this.cloudTextureCache.get(age);
+    if (cached) return cached;
+    if (typeof document === 'undefined') return null;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 180;
+    canvas.height = 68;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    const toCss = (hex: number) => `#${hex.toString(16).padStart(6, '0')}`;
+    const outlineCol = toCss(age === 1 ? 0x6b2019 : age === 3 ? 0x92400e : age >= 5 ? 0x0f172a : 0x64748b);
+    const shadeCol = toCss(age === 1 ? 0xc2512d : age === 3 ? 0xd97706 : age >= 5 ? 0x1e293b : 0xcbd5e1);
+    const bodyCol = toCss(age === 1 ? 0xfcd392 : age === 3 ? 0xfde68a : age >= 5 ? 0x475569 : 0xf8fafc);
+    const hiCol = toCss(age === 1 ? 0xfef3c7 : 0xffffff);
+
+    const cx = 90;
+    const cy = 36;
+    const puffs: Array<[number, number, number, number]> = [
+      [-44, 6, 30, 14],
+      [44, 7, 28, 13],
+      [-20, -4, 36, 20],
+      [18, -2, 32, 18],
+      [0, 5, 58, 14],
+    ];
+    const drawEllipses = (color: string, dx: number, dy: number, rxScale: number, ryScale: number, pad: number = 0) => {
+      ctx.fillStyle = color;
+      for (const [ox, oy, rw, rh] of puffs) {
+        ctx.beginPath();
+        ctx.ellipse(cx + ox + dx, cy + oy + dy, rw * rxScale + pad, rh * ryScale + pad, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    drawEllipses(outlineCol, 0, 0, 1, 1, 2.5);
+    drawEllipses(shadeCol, 0, 2, 1, 1, 0);
+    drawEllipses(bodyCol, 0, -1.5, 0.96, 0.88, 0);
+    ctx.fillStyle = hiCol;
+    ctx.beginPath();
+    ctx.ellipse(cx - 18, cy - 10, 25, 10, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + 16, cy - 8, 20, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const tex = Texture.from(canvas);
+    this.cloudTextureCache.set(age, tex);
+    return tex;
+  }
+
+  /** Khởi tạo 10 Sprite mây cel-shaded trên Lớp 4 (không vẽ lại vector mỗi frame) */
+  private initAnimatedClouds(): void {
+    this.cloudsData = [];
+    this.cloudSprites = [];
+    this.cloudsContainer.removeChildren();
+    const ys = [132, 168, 210, 145, 188, 235, 155, 198, 138, 222];
+    const scales = [0.72, 0.95, 0.60, 0.85, 0.55, 0.78, 0.90, 0.65, 0.80, 0.58];
+    const tex = this.getCloudTexture(this.activeAgeId);
+    this.cloudsCachedAge = this.activeAgeId;
+
+    for (let i = 0; i < 10; i++) {
+      const c = {
+        x: -320 + i * 235 + ((i * 67) % 55),
+        y: ys[i]!,
+        scale: scales[i]!,
+        speed: 8 + ((i * 11) % 10),
+        alpha: 0.85,
+        phase: i * 1.3,
+      };
+      this.cloudsData.push(c);
+
+      const sp = new Sprite(tex || Texture.EMPTY);
+      sp.anchor.set(0.5);
+      sp.scale.set(c.scale);
+      sp.position.set(c.x, c.y);
+      this.cloudSprites.push(sp);
+      this.cloudsContainer.addChild(sp);
+    }
+  }
+
+  /** Cập nhật vị trí Sprite mây (0 lần cấp phát & 0 lần tessellation mỗi frame) */
+  private updateAndDrawClouds(dt: number, worldCamX: number): void {
+    if (this.isTransparent || this.cloudsData.length === 0) {
+      this.cloudsContainer.visible = false;
+      return;
+    }
+    this.cloudsContainer.visible = true;
+    this.cloudsContainer.position.set(-worldCamX * CONFIG.contrastAndBg.parallaxCloudFactor, 0);
+    this.cloudsContainer.alpha = this.activeAgeId >= 5 ? 0.35 : 0.86;
+
+    const age = this.activeAgeId;
+    if (this.cloudsCachedAge !== age) {
+      this.cloudsCachedAge = age;
+      const tex = this.getCloudTexture(age);
+      if (tex) {
+        for (const sp of this.cloudSprites) {
+          sp.texture = tex;
+        }
+      }
+    }
+
+    const wrapMin = -420;
+    const wrapMax = this.V_WIDTH + 1100;
+    for (let i = 0; i < this.cloudsData.length; i++) {
+      const c = this.cloudsData[i]!;
+      const sp = this.cloudSprites[i];
+      c.x -= c.speed * dt;
+      if (c.x < wrapMin) c.x = wrapMax;
+      if (sp) {
+        sp.x = c.x;
+        sp.y = c.y + Math.sin(this.smokePhase * 0.6 + c.phase) * 2.5;
+      }
+    }
+  }
+
+  /** Tạo 3 biến thể texture vệt chém Slash VFX (chỉ tạo 1 lần trong init) */
+  private initSlashTextures(): void {
+    if (typeof document === 'undefined' || this.slashTextures.length > 0) return;
+
+    for (let v = 0; v < CONFIG.slashVfx.variants; v++) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+
+      ctx.translate(64, 64);
+      if (v === 0) {
+        // Biến thể 0: Vệt chém vòng cung sắc bản rộng
+        ctx.beginPath();
+        ctx.arc(-8, 0, 46, -1.05, 1.05, false);
+        ctx.arc(-20, 0, 42, 1.05, -1.05, true);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(-10, -48, 36, 48);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+        grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.96)');
+        grad.addColorStop(1, 'rgba(254, 240, 138, 0.2)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+      } else if (v === 1) {
+        // Biến thể 1: Chém chéo chữ X đôi tốc độ cao
+        for (const ang of [-0.45, 0.45]) {
+          ctx.save();
+          ctx.rotate(ang);
+          ctx.beginPath();
+          ctx.ellipse(6, 0, 44, 7, 0, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(8, 0, 32, 3, 0, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+          ctx.restore();
+        }
+      } else {
+        // Biến thể 2: Vệt đập xung kích dẹt rộng kèm tia mảnh
+        ctx.beginPath();
+        ctx.arc(-14, 0, 52, -0.8, 0.8, false);
+        ctx.arc(-24, 0, 44, 0.8, -0.8, true);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(254, 249, 195, 0.95)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+        ctx.lineWidth = 2.5;
+        for (const a of [-0.6, 0, 0.6]) {
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a) * 18, Math.sin(a) * 18);
+          ctx.lineTo(Math.cos(a) * 52, Math.sin(a) * 52);
+          ctx.stroke();
+        }
+      }
+
+      this.slashTextures.push(Texture.from(canvas));
+    }
+  }
+
+  /** Vẽ pool Slash VFX tại điểm chạm vũ khí (80-120ms, additive) */
+  private drawSlashVfx(): void {
+    const active = particleSystem.activeSlashes;
+    let idx = 0;
+    if (this.slashTextures.length > 0) {
+      for (let i = 0; i < active.length; i++) {
+        const s = active[i]!;
+        const tex = this.slashTextures[s.variant % this.slashTextures.length];
+        if (!tex) continue;
+        const sp = this.acquirePooled(this.slashSpritePool, idx++, this.slashContainer, 'add');
+        sp.texture = tex;
+        sp.anchor.set(0.5);
+        sp.position.set(s.x, s.y);
+        sp.rotation = s.rotation;
+        const lifeGrow = 0.85 + 0.3 * (s.life / Math.max(0.02, s.maxLife));
+        sp.scale.set(s.scale * lifeGrow * s.dir, s.scale * lifeGrow);
+        sp.tint = s.color;
+        sp.alpha = s.alpha;
+      }
+    }
+    for (let i = idx; i < this.slashSpritePool.length; i++) {
+      this.slashSpritePool[i]!.visible = false;
+    }
+  }
+
+  /** Offscreen white-flash texture cache: tô trắng silhouette của frame đúng 1 lần, không tạo canvas mỗi frame */
+  private getWhiteFlashTexture(srcTex: Texture): Texture | null {
+    const cached = this.whiteFlashTexCache.get(srcTex);
+    if (cached) return cached;
+    if (typeof document === 'undefined') return null;
+
+    const resource = (srcTex.source as any)?.resource;
+    if (!resource) return null;
+
+    const fw = Math.max(1, Math.round(srcTex.frame?.width || srcTex.width || 256));
+    const fh = Math.max(1, Math.round(srcTex.frame?.height || srcTex.height || 256));
+    const fx = Math.round(srcTex.frame?.x || 0);
+    const fy = Math.round(srcTex.frame?.y || 0);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = fw;
+    canvas.height = fh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    try {
+      ctx.drawImage(resource, fx, fy, fw, fh, 0, 0, fw, fh);
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, fw, fh);
+      const tex = Texture.from(canvas);
+      if (tex.source) {
+        tex.source.scaleMode = this.isPixelMode ? 'nearest' : 'linear';
+      }
+      this.whiteFlashTexCache.set(srcTex, tex);
+      return tex;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Vẽ xu vàng & orb XP xanh bay theo đường cong Bezier về HUD (trong không gian màn hình 1280x720) */
+  private drawRewardOrbs(): void {
+    const g = this.rewardOrbGraphics;
+    g.clear();
+    const list = particleSystem.activeRewardOrbs;
+    if (list.length === 0) return;
+
+    for (let i = 0; i < list.length; i++) {
+      const orb = list[i]!;
+      if (!orb.active) continue;
+      if (orb.kind === 'GOLD') {
+        const coinW = Math.max(2.2, Math.abs(Math.cos(orb.spin)) * 6.5 * orb.scale);
+        const coinH = 6.5 * orb.scale;
+        if (orb.mergedCount > 1) {
+          g.circle(orb.screenX, orb.screenY, coinH * 1.55).stroke({ width: 1.6, color: 0xfef08a, alpha: 0.72 });
+        }
+        g.ellipse(orb.screenX, orb.screenY, coinW + 1.5, coinH + 1.5).fill({ color: 0x78350f, alpha: 0.9 });
+        g.ellipse(orb.screenX, orb.screenY, coinW, coinH).fill(0xfacc15);
+        g.ellipse(orb.screenX - coinW * 0.2, orb.screenY - coinH * 0.2, Math.max(1, coinW * 0.45), coinH * 0.45).fill(0xfef9c3);
+      } else {
+        const r = 4.6 * orb.scale;
+        g.circle(orb.screenX, orb.screenY, r * 2.1).fill({ color: 0x38bdf8, alpha: 0.25 });
+        g.circle(orb.screenX, orb.screenY, r).fill(0x60a5fa);
+        g.circle(orb.screenX - 1, orb.screenY - 1, r * 0.45).fill(0xe0f2fe);
+      }
+    }
   }
 
   /**
@@ -566,60 +1145,123 @@ export class GameRenderer {
 
     const bg = BACKGROUNDS_DATA[ageId] || BACKGROUNDS_DATA[1]!;
     const p = bg.palette;
+    const panoramaTex = this.textureMap.get(`bg_panorama_age${ageId}`);
+    const hasPano = !!(panoramaTex && ageId >= 1 && ageId <= 3);
 
-    // --- LỚP 1: BẦU TRỜI TOÀN MÀN HÌNH (MỞ RỘNG TRÊN & HAI BÊN, GỘP CHUNG VÙNG THANH MÁU CĂN CỨ) ---
+    // Bảng màu đồng bộ tuyệt đối giữa Bầu trời (Lớp 4) - Panorama Cây cối (Lớp 3) - Mặt đất
+    const panoPalettes: Record<number, { top: number; mid: number; horizon: number; glow: number; bot: number; panoH: number; panoTopY: number }> = {
+      1: { top: 0x3b0d11, mid: 0x881c1a, horizon: 0xd9531e, glow: 0xf59e0b, bot: 0x1e0e07, panoH: 420, panoTopY: 300 },
+      2: { top: 0x1e3a8a, mid: 0x2b77e6, horizon: 0x3ca1fb, glow: 0x93c5fd, bot: 0x262b14, panoH: 340, panoTopY: 260 },
+      3: { top: 0x78350f, mid: 0xc26d27, horizon: 0xf8b258, glow: 0xfde68a, bot: 0x3f4f1a, panoH: 350, panoTopY: 250 },
+    };
+    const panoPal = hasPano ? panoPalettes[ageId]! : null;
+
+    // --- LỚP 4: BẦU TRỜI & MÂY ĐẰNG SAU ---
     const skyLeft = -1800;
     const skyWidth = this.V_WIDTH + 4200;
     const skyTop = -1200;
-    sky.rect(skyLeft, skyTop, skyWidth, this.GROUND_Y - skyTop).fill(p.skyGradient[0]);
-    // Tầng mây cao dịu mắt phía trên cùng (bao phủ vùng HUD căn cứ bạn & địch)
-    sky.rect(skyLeft, -400, skyWidth, 560).fill({ color: p.skyGradient[0], alpha: 0.9 });
-    sky.rect(skyLeft, 180, skyWidth, this.GROUND_Y - 180).fill({ color: p.skyGradient[1], alpha: 0.42 });
-    // Dải hoàng hôn / chân trời ấm áp
-    sky.rect(skyLeft, 330, skyWidth, this.GROUND_Y - 330).fill({ color: p.skyGradient[1], alpha: 0.72 });
+    const cachedSkyTex = sky === this.skyGraphics ? this.getSkyTexture(ageId, hasPano) : null;
+    if (cachedSkyTex) {
+      this.skySprite.texture = cachedSkyTex;
+      this.skySprite.visible = true;
+      this.skySprite.position.set(-160, this.isPortrait ? -400 : 0);
+      this.skySprite.width = 1640;
+      this.skySprite.height = this.isPortrait ? 860 : 460;
+      if (this.app && !this.isTransparent && this.app.renderer?.background) {
+        this.app.renderer.background.color = panoPal ? panoPal.top : p.skyGradient[0];
+      }
+    } else {
+      if (sky === this.skyGraphics) {
+        this.skySprite.visible = false;
+      }
+      if (panoPal) {
+        sky.rect(skyLeft, skyTop, skyWidth, 0 - skyTop + 2).fill(panoPal.top);
+        const lerpColor = (c1: number, c2: number, t: number): number => {
+          const r1 = (c1 >> 16) & 255, g1 = (c1 >> 8) & 255, b1 = c1 & 255;
+          const r2 = (c2 >> 16) & 255, g2 = (c2 >> 8) & 255, b2 = c2 & 255;
+          const r = Math.round(r1 + (r2 - r1) * t);
+          const g = Math.round(g1 + (g2 - g1) * t);
+          const b = Math.round(b1 + (b2 - b1) * t);
+          return (r << 16) | (g << 8) | b;
+        };
+        const steps = 16;
+        const gradStartY = 0;
+        const gradEndY = 480;
+        const stepH = (gradEndY - gradStartY) / steps;
+        for (let s = 0; s < steps; s++) {
+          const t = s / (steps - 1);
+          const col =
+            t < 0.45
+              ? lerpColor(panoPal.top, panoPal.mid, t / 0.45)
+              : t < 0.8
+                ? lerpColor(panoPal.mid, panoPal.horizon, (t - 0.45) / 0.35)
+                : lerpColor(panoPal.horizon, panoPal.glow, (t - 0.8) / 0.2);
+          const y0 = gradStartY + s * stepH;
+          // Mỗi dải chỉ vẽ chiều cao 1x không chồng đè 32 tầng lên nhau
+          sky.rect(skyLeft, y0, skyWidth, Math.ceil(stepH) + 2).fill(col);
+        }
+      } else {
+        sky.rect(skyLeft, skyTop, skyWidth, this.GROUND_Y - skyTop).fill(p.skyGradient[0]);
+        sky.rect(skyLeft, 180, skyWidth, this.GROUND_Y - 180).fill({ color: p.skyGradient[1], alpha: 0.65 });
+      }
 
-    // Những dải mây mờ tự nhiên trên bầu trời mở rộng
-    for (let cx = -800; cx < this.V_WIDTH + 2200; cx += 340) {
-      const cy = 65 + ((Math.abs(cx) * 17) % 130);
-      sky.ellipse(cx, cy, 95, 22).fill({ color: 0xffffff, alpha: ageId >= 5 ? 0.06 : 0.14 });
-      sky.ellipse(cx + 45, cy + 6, 70, 16).fill({ color: 0xffffff, alpha: ageId >= 5 ? 0.05 : 0.11 });
+      if (p.sunMoonColor) {
+        const sunX = this.V_WIDTH * 0.62;
+        const sunY = panoPal ? 292 : 130;
+        sky.circle(sunX, sunY, 68).fill({ color: 0xf59e0b, alpha: 0.16 });
+        sky.circle(sunX, sunY, 42).fill({ color: 0xfbbf24, alpha: 0.88 });
+        sky.circle(sunX, sunY, 34).fill({ color: 0xfef08a, alpha: 0.92 });
+      }
     }
 
-    // Mặt trời / Mặt trăng / Quả cầu lượng tử
-    if (p.sunMoonColor) {
-      sky.circle(this.V_WIDTH * 0.72, 130, 50).fill(p.sunMoonColor);
-      sky.circle(this.V_WIDTH * 0.72, 130, 66).stroke({ width: 5, color: p.sunMoonColor, alpha: 0.28 });
+    // --- DÃY NÚI / SKYLINE XA (chỉ hiện khi không dùng panorama ảnh) ---
+    if (!hasPano) {
+      for (let tileOffset = -1280; tileOffset <= this.V_WIDTH + 1280; tileOffset += 1280) {
+        far.poly([
+          tileOffset, this.GROUND_Y,
+          tileOffset + 120, 250,
+          tileOffset + 320, 385,
+          tileOffset + 490, 230,
+          tileOffset + 720, 375,
+          tileOffset + 950, 215,
+          tileOffset + 1120, 355,
+          tileOffset + 1280, 265,
+          tileOffset + 1280, this.GROUND_Y,
+        ]).fill(p.farMountainColor);
+      }
     }
 
-    // --- LỚP 2: DÃY NÚI / SKYLINE XA TRẢI RỘNG TOÀN BẢN ĐỒ ---
-    for (let tileOffset = -1280; tileOffset <= this.V_WIDTH + 1280; tileOffset += 1280) {
-      far.poly([
-        tileOffset, this.GROUND_Y,
-        tileOffset + 120, 250,
-        tileOffset + 320, 385,
-        tileOffset + 490, 230,
-        tileOffset + 720, 375,
-        tileOffset + 950, 215,
-        tileOffset + 1120, 355,
-        tileOffset + 1280, 265,
-        tileOffset + 1280, this.GROUND_Y,
-      ]).fill(p.farMountainColor);
-    }
-
-    // --- LỚP 3: VẬT THỂ ĐẶC TRƯNG TỪNG THỜI KỲ (MID LANDMARKS & PANORAMA KỶ NGUYÊN 1-3) ---
-    const panoramaTex = this.textureMap.get(`bg_panorama_age${ageId}`);
-    if (panoramaTex && ageId >= 1 && ageId <= 3) {
+    // --- LỚP 3: CÂY CỐI & PANORAMA KỶ NGUYÊN 1-3 ---
+    if (hasPano && panoPal && panoramaTex) {
+      if (sky === this.skyGraphics) {
+        this.hasPanoramaActive = true;
+      }
+      if (this.isPixelMode && panoramaTex.source) {
+        panoramaTex.source.scaleMode = 'nearest';
+      }
       this.panoramaContainer.visible = true;
-      const panoH = ageId === 1 ? 285 : ageId === 2 ? 305 : 320;
+      const panoH = panoPal.panoH;
       const panoW = 1420;
+      const panoTopY = panoPal.panoTopY;
+      const tw = panoramaTex.width;
+      const th = panoramaTex.height;
+      const cropMargin = ageId === 1 ? 2 : 10;
+      const croppedTex = tw > 40
+        ? new Texture({ source: panoramaTex.source, frame: new Rectangle(cropMargin, 0, tw - cropMargin * 2, th) })
+        : panoramaTex;
+      if (this.isPixelMode && croppedTex.source) {
+        croppedTex.source.scaleMode = 'nearest';
+      }
       const startOffsets = [-320, -320 + panoW, -320 + panoW * 2];
       for (let i = 0; i < this.panoramaBgSprites.length; i++) {
         const sp = this.panoramaBgSprites[i]!;
         sp.visible = true;
-        sp.texture = panoramaTex;
+        sp.texture = croppedTex;
+        sp.tint = CONFIG.contrastAndBg.enableBgDim ? 0xd2d6e0 : 0xffffff;
         sp.anchor.set(0, 0);
+        sp.scale.x = Math.abs(sp.scale.x);
         sp.x = startOffsets[i]!;
-        sp.y = this.GROUND_Y - panoH;
+        sp.y = panoTopY;
         sp.width = panoW + 2; // Chồng mí 2px tránh khe hở
         sp.height = panoH;
         // Đảo chiều tấm giữa để nối liền mạch không thấy vết cắt
@@ -629,6 +1271,9 @@ export class GameRenderer {
         }
       }
     } else {
+      if (sky === this.skyGraphics) {
+        this.hasPanoramaActive = false;
+      }
       this.panoramaContainer.visible = false;
       for (const sp of this.panoramaBgSprites) sp.visible = false;
       for (let landmarkOffset = 0; landmarkOffset <= 2400; landmarkOffset += 1200) {
@@ -641,19 +1286,23 @@ export class GameRenderer {
     const gndWidth = LANE_WIDTH + 3600;
     const gndBottomHeight = this.V_HEIGHT - this.GROUND_Y + 2200;
 
-    // Nền địa tầng sâu mở rộng hết đáy màn hình
-    ground.rect(gndLeft, this.GROUND_Y, gndWidth, gndBottomHeight).fill(p.groundBaseColor);
-    // Lớp đất / móng thành trung tầng (tạo chiều sâu mặt cắt 2.5D phong phú)
-    ground.rect(gndLeft, this.GROUND_Y + 72, gndWidth, 95).fill({ color: 0x090d16, alpha: 0.28 });
-    ground.rect(gndLeft, this.GROUND_Y + 167, gndWidth, gndBottomHeight).fill({ color: 0x020617, alpha: 0.52 });
+    // Nền địa tầng sâu mở rộng hết đáy màn hình (khi có panorama, panorama đã bao phủ tới y=720 nên groundGraphics chỉ lấp phần mở rộng màn dọc > 720)
+    const gndBase = panoPal ? panoPal.bot : p.groundBaseColor;
+    const gndTopY = panoPal ? panoPal.panoTopY + panoPal.panoH - 4 : this.GROUND_Y;
+    if (panoPal) {
+      // Panorama đã vẽ sẵn nền mặt đất tới y=720, groundGraphics chỉ lấp phần mở rộng bên dưới khi màn dọc > 720
+      ground.rect(gndLeft, gndTopY, gndWidth, gndBottomHeight).fill(gndBase);
+    } else {
+      ground.rect(gndLeft, this.GROUND_Y, gndWidth, gndBottomHeight).fill(gndBase);
+      ground.rect(gndLeft, this.GROUND_Y + 72, gndWidth, 95).fill({ color: 0x090d16, alpha: 0.28 });
+      ground.rect(gndLeft, this.GROUND_Y + 167, gndWidth, gndBottomHeight).fill({ color: 0x020617, alpha: 0.52 });
+      ground.rect(gndLeft, this.GROUND_Y, gndWidth, 16).fill(p.groundSurfaceColor);
+      ground.rect(gndLeft, this.GROUND_Y, gndWidth, 3).fill({ color: 0xffffff, alpha: 0.18 });
+      ground.rect(gndLeft, this.GROUND_Y + 70, gndWidth, 3).fill({ color: 0x000000, alpha: 0.35 });
+    }
 
-    // Bề mặt đường chiến đấu chính + viền cỏ / đá sáng
-    ground.rect(gndLeft, this.GROUND_Y, gndWidth, 16).fill(p.groundSurfaceColor);
-    ground.rect(gndLeft, this.GROUND_Y, gndWidth, 3).fill({ color: 0xffffff, alpha: 0.18 });
-    ground.rect(gndLeft, this.GROUND_Y + 70, gndWidth, 3).fill({ color: 0x000000, alpha: 0.35 });
-
-    // Chi tiết địa tầng phong phú theo từng Kỷ nguyên trải dài toàn bản đồ (lấp đầy vùng dưới thanh mua quân)
-    if (ageId === 1) {
+    // Chi tiết địa tầng bằng vector chỉ vẽ khi KHÔNG có panorama (tránh chấm tròn đè lên đất vẽ tay của Kỷ nguyên 1)
+    if (ageId === 1 && !hasPano) {
       // Tiền sử: Cỏ dại mép đường, đá tảng, rễ cây cổ thụ & hóa thạch dưới lòng đất
       for (let x = -400; x < LANE_WIDTH + 400; x += 65) {
         ground.circle(x, this.GROUND_Y + 24, 5).fill(0x522305);
@@ -691,6 +1340,21 @@ export class GameRenderer {
         ground.circle(x + 40, this.GROUND_Y + 112, 4).fill({ color: p.accentDetailColor, alpha: 0.55 });
       }
     }
+
+    if (sky === this.skyGraphics) {
+      this.drawBgDimOverlay(hasPano);
+    }
+  }
+
+  /** Hạng mục 8: Phủ tối nhẹ vùng nền phía sau làn chiến đấu để nhân vật nổi bật rõ nét */
+  private drawBgDimOverlay(hasPano: boolean = false): void {
+    const dimG = this.bgDimOverlay;
+    dimG.clear();
+    // Với Kỷ nguyên 1-3 có Panorama: làm dịu bằng sky canvas & hardware sprite tint (0 overdraw)
+    if (hasPano || this.isTransparent || !CONFIG.contrastAndBg.enableBgDim) return;
+    dimG
+      .rect(0, 0, this.V_WIDTH, this.GROUND_Y)
+      .fill({ color: 0x090d16, alpha: CONFIG.contrastAndBg.bgDimAlpha });
   }
 
   private renderAgeLandmark(g: Graphics, type: string, p: any, offsetX: number = 0): void {
@@ -795,51 +1459,51 @@ export class GameRenderer {
   // ==========================================
 
   private drawBasesAndTurrets(): void {
-    const g = this.baseGraphics;
-    g.clear();
-
     const pAge = this.world.playerAge.currentAge;
     const bAge = this.world.botAge.currentAge;
+    const pSlotsKey = this.world.playerTurrets.slots.map((s) => s?.config.id || '_').join(',');
+    const bSlotsKey = this.world.botTurrets.slots.map((s) => s?.config.id || '_').join(',');
+    const baseKey = `${pAge}_${bAge}_${Math.round(this.world.playerBaseHp)}_${Math.round(this.world.botBaseHp)}_${pSlotsKey}_${bSlotsKey}`;
+    const needsRedraw = baseKey !== this.lastBaseRenderKey || pAge >= 4 || bAge >= 4;
 
-    // Căn cứ Trái (Người chơi - Cờ Xanh)
-    const leftTex = this.textureMap.get(`base_age${pAge}_left`);
-    if (leftTex && pAge >= 1 && pAge <= 3) {
-      this.baseLeftSprite.visible = true;
-      this.baseLeftSprite.texture = leftTex;
-      this.baseLeftSprite.anchor.set(0.5, 1.0);
-      this.baseLeftSprite.position.set(this.BASE_LEFT_X, this.GROUND_Y);
-      this.baseLeftSprite.width = pAge === 3 ? 256 : 240;
-      this.baseLeftSprite.height = 260;
-      // Bóng chân
-      g.ellipse(this.BASE_LEFT_X, this.GROUND_Y + 4, 130, 16).fill({ color: 0x000000, alpha: 0.5 });
-      // 3 ô tháp trên nóc
-      this.renderTurretSlotOutlines(g, this.BASE_LEFT_X, this.GROUND_Y - 260, 1, this.world.playerTurrets.slots.length);
-    } else {
-      this.baseLeftSprite.visible = false;
-      this.drawEpicBase(g, this.BASE_LEFT_X, this.GROUND_Y, pAge, 'LEFT', this.world.playerBaseHp);
+    if (needsRedraw) {
+      this.lastBaseRenderKey = baseKey;
+      const g = this.baseGraphics;
+      g.clear();
+
+      // Căn cứ Trái (Người chơi - Cờ Xanh)
+      const leftTex = this.textureMap.get(`base_age${pAge}_left`);
+      if (leftTex && pAge >= 1 && pAge <= 3) {
+        this.baseLeftSprite.visible = true;
+        this.baseLeftSprite.texture = leftTex;
+        this.baseLeftSprite.anchor.set(0.5, 1.0);
+        this.baseLeftSprite.position.set(this.BASE_LEFT_X, this.GROUND_Y);
+        this.baseLeftSprite.width = pAge === 3 ? 256 : 240;
+        this.baseLeftSprite.height = 260;
+        this.renderTurretSlotOutlines(g, this.BASE_LEFT_X, this.GROUND_Y - 260, 1, this.world.playerTurrets.slots.length);
+      } else {
+        this.baseLeftSprite.visible = false;
+        this.drawEpicBase(g, this.BASE_LEFT_X, this.GROUND_Y, pAge, 'LEFT', this.world.playerBaseHp);
+      }
+
+      // Căn cứ Phải (Đối thủ Bot - Cờ Đỏ)
+      const rightTex = this.textureMap.get(`base_age${bAge}_right`);
+      if (rightTex && bAge >= 1 && bAge <= 3) {
+        this.baseRightSprite.visible = true;
+        this.baseRightSprite.texture = rightTex;
+        this.baseRightSprite.anchor.set(0.5, 1.0);
+        this.baseRightSprite.position.set(this.BASE_RIGHT_X, this.GROUND_Y);
+        this.baseRightSprite.width = bAge === 3 ? 256 : 240;
+        this.baseRightSprite.height = 260;
+        this.renderTurretSlotOutlines(g, this.BASE_RIGHT_X, this.GROUND_Y - 260, -1, this.world.botTurrets.slots.length);
+      } else {
+        this.baseRightSprite.visible = false;
+        this.drawEpicBase(g, this.BASE_RIGHT_X, this.GROUND_Y, bAge, 'RIGHT', this.world.botBaseHp);
+      }
+
+      this.drawWorldBaseHealthBar(g, this.BASE_LEFT_X, this.GROUND_Y - 306, this.world.playerBaseHp, BASE_MAX_HP, true);
+      this.drawWorldBaseHealthBar(g, this.BASE_RIGHT_X, this.GROUND_Y - 306, this.world.botBaseHp, BASE_MAX_HP, false);
     }
-
-    // Căn cứ Phải (Đối thủ Bot - Cờ Đỏ)
-    const rightTex = this.textureMap.get(`base_age${bAge}_right`);
-    if (rightTex && bAge >= 1 && bAge <= 3) {
-      this.baseRightSprite.visible = true;
-      this.baseRightSprite.texture = rightTex;
-      this.baseRightSprite.anchor.set(0.5, 1.0);
-      this.baseRightSprite.position.set(this.BASE_RIGHT_X, this.GROUND_Y);
-      this.baseRightSprite.width = bAge === 3 ? 256 : 240;
-      this.baseRightSprite.height = 260;
-      // Bóng chân
-      g.ellipse(this.BASE_RIGHT_X, this.GROUND_Y + 4, 130, 16).fill({ color: 0x000000, alpha: 0.5 });
-      // 3 ô tháp trên nóc
-      this.renderTurretSlotOutlines(g, this.BASE_RIGHT_X, this.GROUND_Y - 260, -1, this.world.botTurrets.slots.length);
-    } else {
-      this.baseRightSprite.visible = false;
-      this.drawEpicBase(g, this.BASE_RIGHT_X, this.GROUND_Y, bAge, 'RIGHT', this.world.botBaseHp);
-    }
-
-    // Thanh máu tích hợp trực tiếp trên đỉnh Căn cứ Bạn & Căn cứ Địch trong không gian Map
-    this.drawWorldBaseHealthBar(g, this.BASE_LEFT_X, this.GROUND_Y - 306, this.world.playerBaseHp, BASE_MAX_HP, true);
-    this.drawWorldBaseHealthBar(g, this.BASE_RIGHT_X, this.GROUND_Y - 306, this.world.botBaseHp, BASE_MAX_HP, false);
 
     // Vẽ Tháp canh trên 3 ô nóc căn cứ
     this.drawTurretSlots();
@@ -1162,16 +1826,103 @@ export class GameRenderer {
   private drawChibiUnitsBatch(interpolation: number = 1.0): void {
     const g = this.unitGraphics;
     g.clear();
+    const arrowG = this.playerArrowGraphics;
+    arrowG.clear();
 
-    const allUnits = [...this.world.playerUnits, ...this.world.botUnits];
-    allUnits.sort((a, b) => a.y - b.y);
+    const interp = Math.max(0, Math.min(1.0, interpolation));
+
+    // 0. Separation steering & ranh giới tiền tuyến rõ ràng (không cấp phát mảng mới mỗi frame)
+    let frontLeftX = -Infinity;
+    let leadLeftUnit: Unit | null = null;
+    for (let i = 0; i < this.world.playerUnits.length; i++) {
+      const u = this.world.playerUnits[i]!;
+      if (!u.isAlive || u.config.flying || u.spriteConfig?.flying) continue;
+      if (u.x > frontLeftX) {
+        frontLeftX = u.x;
+        leadLeftUnit = u;
+      }
+    }
+
+    let frontRightX = Infinity;
+    let leadRightUnit: Unit | null = null;
+    for (let i = 0; i < this.world.botUnits.length; i++) {
+      const u = this.world.botUnits[i]!;
+      if (!u.isAlive || u.config.flying || u.spriteConfig?.flying) continue;
+      if (u.x < frontRightX) {
+        frontRightX = u.x;
+        leadRightUnit = u;
+      }
+    }
+
+    const MIN_VISUAL_GAP = CONFIG.crowd.separationVisualGapPx;
+    const smoothRate = CONFIG.crowd.separationSmoothRate;
+    const enemyGapHalf = CONFIG.attack.standoffGapPx + 42;
+    const computeTeamVisualSep = (teamUnits: readonly Unit[], dir: number, enemyFrontX: number) => {
+      const buf = this.sepUnitsBuf;
+      buf.length = 0;
+      for (let i = 0; i < teamUnits.length; i++) {
+        const u = teamUnits[i]!;
+        if (u.isAlive && !u.config.flying && !u.spriteConfig?.flying) {
+          buf.push(u);
+        }
+      }
+      buf.sort((a, b) => (b.x - a.x) * dir);
+
+      let prevRenderX: number | null = null;
+      for (let i = 0; i < buf.length; i++) {
+        const u = buf[i]!;
+        const fx = this.getUnitFx(u);
+        const rawX = u.prevX !== undefined ? u.prevX + (u.x - u.prevX) * interp : u.x;
+        let targetSep = 0;
+        if (i > 0 && prevRenderX !== null) {
+          const desiredMaxAlongDir = prevRenderX - dir * MIN_VISUAL_GAP;
+          const gapShortfall = (rawX - desiredMaxAlongDir) * dir;
+          if (gapShortfall > 0) {
+            targetSep = -dir * gapShortfall;
+          }
+        }
+        // Không cho phép đơn vị phe mình lấn sang phía bên kia của tiền tuyến địch
+        if (Number.isFinite(enemyFrontX)) {
+          const maxRenderAlongDir = dir === 1 ? enemyFrontX - enemyGapHalf : -(enemyFrontX + enemyGapHalf);
+          const candidateAlongDir = (rawX + targetSep) * dir;
+          if (candidateAlongDir > maxRenderAlongDir) {
+            targetSep -= dir * (candidateAlongDir - maxRenderAlongDir);
+          }
+        }
+        fx.visualSepOffset += (targetSep - fx.visualSepOffset) * smoothRate;
+        prevRenderX = rawX + fx.visualSepOffset;
+      }
+    };
+    computeTeamVisualSep(this.world.playerUnits, 1, frontRightX);
+    computeTeamVisualSep(this.world.botUnits, -1, frontLeftX);
+
+    // Y-sort theo tọa độ chân thực tế (footY = GROUND_Y + (y - 520) * 0.4 + laneOffsetY)
+    const allUnits = this.sortedUnitsBuf;
+    allUnits.length = 0;
+    for (let i = 0; i < this.world.playerUnits.length; i++) {
+      allUnits.push(this.world.playerUnits[i]!);
+    }
+    for (let i = 0; i < this.world.botUnits.length; i++) {
+      allUnits.push(this.world.botUnits[i]!);
+    }
+    allUnits.sort((a, b) => {
+      const aFootY = this.GROUND_Y + (a.y - 520) * 0.4 + (a.laneOffsetY || 0);
+      const bFootY = this.GROUND_Y + (b.y - 520) * 0.4 + (b.laneOffsetY || 0);
+      if (Math.abs(aFootY - bFootY) > 0.01) return aFootY - bFootY;
+      return a.id < b.id ? -1 : 1;
+    });
 
     let spriteIdx = 0;
     let weaponSpriteIdx = 0;
-    const interp = Math.max(0, Math.min(1.0, interpolation));
+    this.flashIdx = 0;
+    this.ghostIdx = 0;
+
+    const arrowPulsePhase = particleSystem.time * CONFIG.teamAndHealth.playerArrowPulseHz * Math.PI * 2;
+    const arrowPulse = 0.88 + Math.sin(arrowPulsePhase) * 0.14;
 
     for (const unit of allUnits) {
       const isLeft = unit.team === 'LEFT';
+      const isAllyControlled = unit.team === this.playerControlledTeam;
       const dir = unit.direction;
 
       const isTank = unit.config.type === 'TANK';
@@ -1180,19 +1931,72 @@ export class GameRenderer {
       const unitH = isTank ? 115 : isSpecial ? 105 : 95;
       const unitW = isTank ? 65 : 50;
 
-      // Chi tiết bằng code: Mờ dần khi chết
-      const fadeAlpha = !unit.isAlive ? Math.max(0, 1.0 - unit.deathFadeTimer / unit.deathDuration) : 1.0;
+      // Giữ xác 300ms sau khi hoàn tất clip DIE rồi mới fade out 400ms
+      let fadeAlpha = 1.0;
+      if (!unit.isAlive) {
+        const holdEnd = unit.deathAnimDuration + unit.corpseHoldDuration;
+        if (unit.deathFadeTimer > holdEnd) {
+          fadeAlpha = Math.max(0, 1.0 - (unit.deathFadeTimer - holdEnd) / Math.max(0.05, unit.corpseFadeDuration));
+        }
+      }
 
-      // Tọa độ nội suy mượt mà 10/10 + Snap pixel khi bật Pixel Mode
-      const rawUnitX = unit.prevX !== undefined ? unit.prevX + (unit.x - unit.prevX) * interp : unit.x;
+      const fx = this.getUnitFx(unit);
+      const rawUnitX = (unit.prevX !== undefined ? unit.prevX + (unit.x - unit.prevX) * interp : unit.x) + fx.visualSepOffset;
       const unitX = this.isPixelMode ? Math.round(rawUnitX) : rawUnitX;
-      const unitY = this.GROUND_Y + (unit.y - 520) * 0.4;
+      const unitY = this.GROUND_Y + (unit.y - 520) * 0.4 + (unit.laneOffsetY || 0);
 
-      // 1. Chi tiết bằng code: Bóng elip dưới chân tách riêng (thu nhỏ mờ khi bay)
-      const shadowScale = isFlying ? Math.max(0.35, 1.0 - Math.abs(unit.flyingOffset) / 120) : 1.0;
-      const shadowW = unitW * 0.52 * shadowScale;
-      const shadowH = 7.5 * shadowScale;
-      g.ellipse(unitX, unitY + 4, shadowW, shadowH).fill({ color: 0x000000, alpha: 0.38 * fadeAlpha });
+      // Lấy texture theo đúng màu phe (băng đô xanh P1 vs băng đô đỏ P2)
+      const spriteTex = spriteLoader.getFrameTexture(unit.config.id, unit.currentClip, unit.currentFrameIndex, unit.team);
+      const hasAtlasSprite = Boolean(spriteTex);
+
+      const isMeleeStrike =
+        unit.config.type === 'MELEE' ||
+        unit.config.type === 'TANK' ||
+        unit.lastAttackWasMeleeFallback;
+      const targetLunge =
+        unit.state === 'ATTACK'
+          ? dir * Math.sin(unit.attackAnimProgress * Math.PI) * (isMeleeStrike ? (hasAtlasSprite ? 5 : 14) : -2)
+          : 0;
+      fx.smoothLunge += (targetLunge - fx.smoothLunge) * 0.32;
+
+      // Knockback 6px đã easing ease-out rồi trả về bên trong Unit.ts
+      const targetRecoilX = -dir * (unit.recoilOffset || 0);
+      fx.smoothRecoil += (targetRecoilX - fx.smoothRecoil) * 0.55;
+
+      // Chu kỳ 1 bước chân (4 frame = 1 bước): dùng chung cho bóng co giãn, bob 1-2px & bụi gót chân
+      const stepPeriodFrames = Math.max(1, CONFIG.crowd.footDustIntervalFrames);
+      const stepWave = Math.abs(Math.sin((unit.walkAnimPhase / stepPeriodFrames) * Math.PI));
+      const isWalkingGround = unit.isAlive && !isFlying && unit.state === 'WALK' && unit.currentClip === 'walk';
+
+      // 1. Bóng ellipse dưới chân (alpha CONFIG.crowd.shadowAlpha = 0.35, co giãn theo nhịp bước)
+      const gfx = graphicsSettings.get();
+      if (gfx.shadows) {
+        const lift = isFlying ? Math.abs(unit.flyingOffset) : 0;
+        const flyingScale = isFlying ? Math.max(0.35, 1.0 - lift / 120) : 1.0;
+        const stepShadowPulse = isWalkingGround ? 1.0 - stepWave * 0.1 : 1.0;
+        const strikeSquash = unit.state === 'ATTACK' ? 1 + Math.sin(unit.attackAnimProgress * Math.PI) * 0.06 : 1;
+        const shadowW = unitW * 0.52 * flyingScale * stepShadowPulse * strikeSquash;
+        const shadowH = 6.5 * flyingScale * stepShadowPulse;
+        const footX = unitX + fx.smoothLunge + fx.smoothRecoil;
+        this.shadowGraphics
+          .ellipse(footX, unitY + 3, shadowW, shadowH)
+          .fill({ color: 0x000000, alpha: CONFIG.crowd.shadowAlpha * fadeAlpha * flyingScale });
+      }
+
+      // 1.5 Mũi tên xanh dưới chân CHỈ hiện cho đơn vị phe người chơi điều khiển, có pulse nhẹ
+      if (unit.isAlive && isAllyControlled) {
+        const aw = CONFIG.teamAndHealth.playerArrowSizePx * arrowPulse;
+        const ah = aw * 0.65;
+        const ay = unitY + 11;
+        const ax = unitX + fx.smoothLunge + fx.smoothRecoil;
+        arrowG
+          .poly([ax, ay - ah * 0.45, ax - aw, ay + ah, ax + aw, ay + ah])
+          .fill({
+            color: 0x4ade80,
+            alpha: 0.85 + (arrowPulse - 0.88) * 1.0,
+          })
+          .stroke({ width: 1.5, color: 0x052e16, alpha: 0.9 });
+      }
 
       // Hào quang hiệu ứng Stun / Immune Physical
       if (unit.status.isStunned()) {
@@ -1202,33 +2006,48 @@ export class GameRenderer {
         g.circle(unitX, unitY - unitH * 0.5, unitH * 0.6).stroke({ width: 4, color: 0xa7f3d0, alpha: fadeAlpha });
       }
 
-      // 2. Chi tiết bằng code: Nhún nhẹ khi đi (walk bounce)
-      const walkBounce = unit.state === 'WALK' && unit.currentClip === 'walk' && !isFlying
-        ? Math.abs(Math.sin(unit.walkAnimPhase * Math.PI)) * 2.8
-        : 0;
-      const actualY = unitY + unit.flyingOffset - walkBounce;
+      // 2. Nhún 1.5px nhẹ đồng bộ đúng nhịp bước chân (chỉ khi đang đi bộ)
+      const stepBob = isWalkingGround ? stepWave * CONFIG.crowd.stepBobPx : 0;
+      const actualY = unitY + unit.flyingOffset - stepBob;
+      const finalX = unitX + fx.smoothLunge + fx.smoothRecoil;
 
-      const isMeleeStrike =
-        unit.config.type === 'MELEE' ||
-        unit.config.type === 'TANK' ||
-        unit.lastAttackWasMeleeFallback;
-      const lunge =
-        unit.state === 'ATTACK'
-          ? dir * Math.sin(unit.attackAnimProgress * Math.PI) * (isMeleeStrike ? 16 : -3)
-          : 0;
+      // Bụi nhỏ ở đúng frame chạm gót
+      if (unit.isAlive && isWalkingGround) {
+        const stepIndex = Math.floor(unit.walkAnimPhase / stepPeriodFrames);
+        if (stepIndex !== fx.lastStep) {
+          fx.lastStep = stepIndex;
+          const era = unit.spriteConfig?.age || this.activeAgeId;
+          const dustColor = era >= 5 ? 0x64748b : era === 4 ? 0x78716c : 0xa8906c;
+          particleSystem.spawnFootDust(finalX, unitY, dir, dustColor);
+        }
+      }
 
-      // 3. Chi tiết bằng code: Giật lùi (recoilOffset) khi trúng đòn
-      const recoilX = -dir * (unit.recoilOffset || 0);
-      const finalX = unitX + lunge + recoilX;
-
-      // Texture từ SpriteLoader
-      const spriteTex = spriteLoader.getFrameTexture(unit.config.id, unit.currentClip, unit.currentFrameIndex);
+      // Muzzle flash tại đỉnh đánh tầm xa khi fallback / thiếu event World
+      if (unit.isAlive && !isMeleeStrike) {
+        const prog = unit.state === 'ATTACK' ? unit.attackAnimProgress : 0;
+        if (fx.lastAttackProgress < 0.45 && prog >= 0.45) {
+          particleSystem.spawnMuzzleFlash(finalX + dir * 30, unitY - unitH * 0.5, dir, unit.config.accentColor);
+        }
+        fx.lastAttackProgress = prog;
+      } else {
+        fx.lastAttackProgress = unit.state === 'ATTACK' ? unit.attackAnimProgress : 0;
+      }
 
       // Fallback texture
       const unitEra = unit.spriteConfig?.age || (isLeft ? this.world.playerAge.currentAge : this.world.botAge.currentAge);
       const typeKey = unit.config.type.toLowerCase();
       const texKey = `unit_age${unitEra}_${typeKey}`;
       const legacyTex = this.textureMap.get(texKey);
+
+      // Hạng mục D: Đơn vị phía sau (không giao tranh) giảm độ sáng ~8% để nổi bật tiền tuyến
+      const isFrontlineOrEngaged =
+        !unit.isAlive ||
+        unit.state === 'ATTACK' ||
+        unit.anim.state === 'ATTACK' ||
+        unit.inCombatTimer > 0 ||
+        unit === leadLeftUnit ||
+        unit === leadRightUnit;
+      const unitBodyTint = isFrontlineOrEngaged ? 0xffffff : CONFIG.crowd.rearUnitTintHex;
 
       if (spriteTex) {
         let sprite = this.unitSpritePool[spriteIdx];
@@ -1243,36 +2062,17 @@ export class GameRenderer {
         sprite.texture = spriteTex;
         const anchor = unit.spriteConfig?.anchor || { x: 0.5, y: 0.90 };
         sprite.anchor.set(anchor.x, anchor.y);
-        sprite.position.set(finalX, actualY);
 
         const targetH = unit.spriteConfig?.targetHeight || unitH;
         const texH = spriteTex.height || 256;
         const scale = targetH / texH;
         sprite.scale.set(scale * dir, scale);
         sprite.alpha = fadeAlpha;
+        sprite.rotation = 0;
+        sprite.position.set(finalX, actualY);
 
-        // Procedural secondary motion: Nhún người & hơi nghiêng theo nhịp sải chân
-        let proceduralRot = 0;
-        let proceduralBobY = 0;
-        if (unit.currentClip === 'walk') {
-          proceduralRot = Math.sin(unit.walkAnimPhase * Math.PI) * 0.04 * dir;
-          proceduralBobY = -Math.abs(Math.sin(unit.walkAnimPhase * Math.PI)) * 3;
-        } else if (unit.currentClip === 'attack') {
-          proceduralRot = (unit.attackAnimProgress * 0.06) * dir;
-        }
-        sprite.rotation = proceduralRot;
-        sprite.position.set(finalX, actualY + proceduralBobY);
-
-        // 4. Chi tiết bằng code: Nháy trắng khi trúng đòn
-        if (unit.hurtFlashTimer > 0) {
-          sprite.tint = 0xffe4e6;
-          g.ellipse(finalX, actualY - unitH * 0.48, unitW * 0.52, unitH * 0.46).fill({
-            color: 0xffffff,
-            alpha: 0.48 * fadeAlpha,
-          });
-        } else {
-          sprite.tint = 0xffffff;
-        }
+        sprite.tint = unitBodyTint;
+        this.applyUnitSpriteFx(sprite, unit, fadeAlpha, true);
       } else if (legacyTex && legacyTex.source) {
         let sprite = this.unitSpritePool[spriteIdx];
         if (!sprite) {
@@ -1293,21 +2093,12 @@ export class GameRenderer {
         sprite.scale.set(scaleX, scaleY);
         sprite.alpha = fadeAlpha;
 
-        if (unit.hurtFlashTimer > 0) {
-          sprite.tint = 0xffe4e6;
-          g.ellipse(finalX, actualY - unitH * 0.48, unitW * 0.52, unitH * 0.46).fill({
-            color: 0xffffff,
-            alpha: 0.48 * fadeAlpha,
-          });
-        } else {
-          sprite.tint = 0xffffff;
-        }
+        sprite.tint = unitBodyTint;
+        this.applyUnitSpriteFx(sprite, unit, fadeAlpha, false);
       } else {
-        // Fallback 3: Vẽ Vector PIXI.Graphics Chibi (không bao giờ crash game)
         this.drawCrispChibiUnit(g, unit);
       }
 
-      // Hiển thị Debug Hộp trúng đòn (Hitbox) & Điểm neo chân (Foot Anchor)
       if (this.showHitboxes && unit.spriteConfig?.hitbox) {
         const hb = unit.spriteConfig.hitbox;
         const hbX = dir === 1 ? unitX + hb.x : unitX - hb.x - hb.width;
@@ -1321,14 +2112,31 @@ export class GameRenderer {
         g.circle(unitX, actualY, 3).fill(0x22d3ee);
       }
 
-      // Thanh máu mini trên đầu
-      const hpPct = Math.max(0, unit.hp / unit.maxHp);
-      const barW = Math.max(45, unitW + 10);
-      const barY = unitY - unitH - 12;
-      const hpColor = hpPct < 0.3 ? 0xef4444 : 0x22c55e;
+      // Thanh máu hiện cho TẤT CẢ đơn vị đang ở trạng thái attack hoặc đã bị đánh / vừa giao tranh + Ghost Bar 0.4s
+      const showHpBar =
+        unit.isAlive &&
+        (unit.state === 'ATTACK' ||
+          unit.anim.state === 'ATTACK' ||
+          unit.hasTakenDamage ||
+          unit.hp < unit.maxHp ||
+          unit.inCombatTimer > 0);
+      if (showHpBar) {
+        const hpPct = Math.max(0, Math.min(1, unit.hp / unit.maxHp));
+        const ghostPct = Math.max(hpPct, Math.min(1, unit.ghostHp / unit.maxHp));
+        const barW = Math.max(CONFIG.teamAndHealth.barWidthPx, unitW);
+        const barH = CONFIG.teamAndHealth.barHeightPx;
+        const barX = finalX - barW / 2;
+        const barY = unitY - unitH - 12;
+        const hpColor = isAllyControlled ? CONFIG.teamAndHealth.allyHpColor : CONFIG.teamAndHealth.enemyHpColor;
 
-      g.roundRect(unitX - barW / 2, barY, barW, 6, 3).fill({ color: 0x0f172a, alpha: 0.85 * fadeAlpha });
-      g.roundRect(unitX - barW / 2, barY, barW * hpPct, 6, 3).fill({ color: hpColor, alpha: fadeAlpha });
+        g.roundRect(barX - 1, barY - 1, barW + 2, barH + 2, 3).fill({ color: 0x0f172a, alpha: 0.88 * fadeAlpha });
+        if (ghostPct > hpPct) {
+          g.roundRect(barX, barY, barW * ghostPct, barH, 2).fill({ color: 0xffffff, alpha: 0.88 * fadeAlpha });
+        }
+        if (hpPct > 0) {
+          g.roundRect(barX, barY, barW * hpPct, barH, 2).fill({ color: hpColor, alpha: fadeAlpha });
+        }
+      }
 
       // ==========================================
       // GẮN VŨ KHÍ TÙY BIẾN CHO NGƯỜI VƯỢN (HAND SOCKET ATTACHMENT)
@@ -1370,7 +2178,7 @@ export class GameRenderer {
 
             if (unit.state === 'ATTACK') {
               const swingProg = unit.attackAnimProgress;
-              handOffsetX = (16 + lunge * 0.6) * dir;
+              handOffsetX = (16 + fx.smoothLunge * 0.6) * dir;
               handOffsetY = -unitH * (0.42 - Math.sin(swingProg * Math.PI) * 0.14);
               handRot = (-0.95 + swingProg * 2.3) * dir;
             }
@@ -1398,6 +2206,123 @@ export class GameRenderer {
     for (let i = weaponSpriteIdx; i < this.customWeaponSpritePool.length; i++) {
       this.customWeaponSpritePool[i]!.visible = false;
     }
+    for (let i = this.flashIdx; i < this.unitFlashPool.length; i++) {
+      this.unitFlashPool[i]!.visible = false;
+    }
+    for (let i = this.ghostIdx; i < this.ghostPool.length; i++) {
+      this.ghostPool[i]!.visible = false;
+    }
+  }
+
+  private flashIdx: number = 0;
+  private ghostIdx: number = 0;
+
+  private getUnitFx(unit: Unit): UnitFxState {
+    let s = this.unitFx.get(unit);
+    if (!s) {
+      s = {
+        lastStep: Math.floor(unit.walkAnimPhase * 0.25),
+        lastAttackProgress: 0,
+        visualSepOffset: 0,
+        smoothLunge: 0,
+        smoothRecoil: 0,
+      };
+      this.unitFx.set(unit, s);
+    }
+    return s;
+  }
+
+  private acquirePooled(pool: Sprite[], idx: number, container: Container, blend: 'add' | 'normal'): Sprite {
+    let s = pool[idx];
+    if (!s) {
+      s = new Sprite();
+      pool.push(s);
+      container.addChild(s);
+    }
+    s.visible = true;
+    s.blendMode = blend;
+    return s;
+  }
+
+  /** Độ lao tới khi chém tại một thời điểm tiến trình đòn đánh */
+  private lungeAt(unit: Unit, progress: number): number {
+    const p = Math.max(0, Math.min(1, progress));
+    const melee = unit.config.type === 'MELEE' || unit.config.type === 'TANK' || unit.lastAttackWasMeleeFallback;
+    return unit.direction * Math.sin(p * Math.PI) * (melee ? 8 : -2);
+  }
+
+  /**
+   * Hiệu ứng trên sprite nhân vật:
+   * - Squash & Stretch 1.0 -> 1.08/0.92 -> 1.0 trong 100ms khi trúng đòn
+   * - White flash 80ms dùng offscreen tint cache (không tạo canvas mỗi frame)
+   */
+  private applyUnitSpriteFx(sprite: Sprite, unit: Unit, fadeAlpha: number, hasAtlasSprite: boolean = false): void {
+    const gfx = graphicsSettings.get();
+    const flashSec = Math.max(0.01, CONFIG.hitFeedback.whiteFlashMs / 1000);
+    const hurtK = unit.hurtFlashTimer > 0 ? Math.min(1, unit.hurtFlashTimer / flashSec) : 0;
+
+    // Squash & Stretch trong CONFIG.hitFeedback.squashDurationMs (100ms)
+    let sx = 1;
+    let sy = 1;
+    if (unit.squashTimer > 0 && unit.isAlive) {
+      const sqDur = Math.max(0.01, CONFIG.hitFeedback.squashDurationMs / 1000);
+      const sqT = 1 - unit.squashTimer / sqDur;
+      const sqWave = Math.sin(sqT * Math.PI);
+      sx += (CONFIG.hitFeedback.squashScaleX - 1.0) * sqWave;
+      sy += (CONFIG.hitFeedback.squashScaleY - 1.0) * sqWave;
+    }
+    if (!hasAtlasSprite && unit.state === 'ATTACK') {
+      const s = Math.sin(unit.attackAnimProgress * Math.PI);
+      sx += 0.06 * s;
+      sy -= 0.04 * s;
+    }
+    if (sx !== 1 || sy !== 1) {
+      sprite.scale.set(sprite.scale.x * sx, sprite.scale.y * sy);
+    }
+
+    // Vệt dư ảnh chỉ bật cho kỷ nguyên công nghệ cao (5-6) hoặc đơn vị SPECIAL
+    const unitEra = unit.spriteConfig?.age || 1;
+    const allowTrails = unitEra >= 5 || unit.config.type === 'SPECIAL';
+    const melee = unit.config.type === 'MELEE' || unit.config.type === 'TANK' || unit.lastAttackWasMeleeFallback;
+    if (gfx.motionTrails && allowTrails && unit.isAlive && unit.state === 'ATTACK' && melee) {
+      const p = unit.attackAnimProgress;
+      if (p > 0.08 && p < 0.75) {
+        const now = this.lungeAt(unit, p);
+        const ghostBlend = gfx.glow ? 'add' : 'normal';
+        const color = TEAM_GHOST_COLOR[unit.team];
+        for (let k = 1; k <= 2; k++) {
+          const past = this.lungeAt(unit, p - k * 0.075);
+          const dx = now - past;
+          if (Math.abs(dx) < 1.5) continue;
+          const gh = this.acquirePooled(this.ghostPool, this.ghostIdx++, this.ghostContainer, ghostBlend);
+          gh.texture = sprite.texture;
+          gh.anchor.copyFrom(sprite.anchor);
+          gh.scale.copyFrom(sprite.scale);
+          gh.rotation = sprite.rotation;
+          gh.position.set(sprite.position.x - dx, sprite.position.y);
+          gh.tint = color;
+          gh.alpha = (0.28 - k * 0.1) * fadeAlpha;
+        }
+      }
+    }
+
+    // White Flash 80ms dùng offscreen silhouette cache (không nhòe sáng làm mù vùng giao tranh)
+    if (gfx.hitFlash && hurtK > 0) {
+      const cachedWhite = this.getWhiteFlashTexture(sprite.texture);
+      const fl = this.acquirePooled(
+        this.unitFlashPool,
+        this.flashIdx++,
+        this.unitFlashContainer,
+        cachedWhite ? 'normal' : 'add'
+      );
+      fl.texture = cachedWhite || sprite.texture;
+      fl.anchor.copyFrom(sprite.anchor);
+      fl.scale.copyFrom(sprite.scale);
+      fl.rotation = sprite.rotation;
+      fl.position.copyFrom(sprite.position);
+      fl.tint = 0xffffff;
+      fl.alpha = (cachedWhite ? 0.85 * hurtK : Math.min(0.32, hurtK * 0.35)) * fadeAlpha;
+    }
   }
 
   private drawCrispChibiUnit(g: Graphics, unit: Unit): void {
@@ -1416,8 +2341,7 @@ export class GameRenderer {
     const unitX = unit.x;
     const chibiY = this.GROUND_Y + (unit.y - 520) * 0.4 + bobbing; // Đặt đúng trên lane 540
 
-    // BÓNG ĐỔ ELIP MỜ DƯỚI CHÂN
-    g.ellipse(unitX, chibiY + 4, unitW * 0.45, 8).fill({ color: 0x000000, alpha: 0.35 * fadeAlpha });
+    // (Bóng đổ mềm đã được vẽ chung trong drawChibiUnitsBatch → lớp shadowGraphics)
 
     // Hào quang hiệu ứng Stun / Immune Physical
     if (unit.status.isStunned()) {
@@ -1496,6 +2420,13 @@ export class GameRenderer {
   private drawProjectiles(interpolation: number = 1.0): void {
     const g = this.projGraphics;
     g.clear();
+    const glow = this.projGlowGraphics;
+    glow.clear();
+    const mG = this.meteorGraphics;
+    mG.clear();
+    const mGlow = this.meteorGlowGraphics;
+    mGlow.clear();
+    const glowOn = graphicsSettings.get().glow;
 
     const interp = Math.max(0, Math.min(1.0, interpolation));
 
@@ -1506,29 +2437,44 @@ export class GameRenderer {
       const px = this.isPixelMode ? Math.round(rawPx) : rawPx;
       const py = this.isPixelMode ? Math.round(rawPy) : rawPy;
 
+      // Mưa thiên thạch vẽ lên Lớp 1 trên cùng (meteorGraphics / meteorGlowGraphics)
+      const targetG = proj.isUltimateBarrage ? mG : g;
+      const targetGlow = proj.isUltimateBarrage ? mGlow : glow;
+
+      // Quầng sáng phát quang quanh đầu đạn (lớp Additive)
+      if (glowOn) {
+        const isRock = !proj.isUltimateBarrage && proj.radius >= 8;
+        if (!isRock) {
+          const r = proj.radius * (proj.isUltimateBarrage ? 1.6 : 1.0);
+          targetGlow.circle(px, py, r * 3.4).fill({ color: proj.color, alpha: 0.16 });
+          targetGlow.circle(px, py, r * 2.1).fill({ color: proj.color, alpha: 0.32 });
+          targetGlow.circle(px, py, r * 1.1).fill({ color: 0xffffff, alpha: 0.45 });
+        }
+      }
+
       if (proj.isUltimateBarrage) {
-        // Đạn Đại Pháo Hoàng Gia / Mưa Thiên Thạch rơi chéo rực lửa từ bầu trời
+        // Đạn Đại Pháo Hoàng Gia / Mưa Thiên Thạch rơi chéo rực lửa từ bầu trời (Lớp 1)
         const speed = Math.hypot(proj.vx, proj.vy) || 1;
         const ux = -proj.vx / speed;
         const uy = -proj.vy / speed;
         const tailLen = proj.radius * 4.2;
 
-        g.poly([
+        targetG.poly([
           px - uy * proj.radius * 0.9, py + ux * proj.radius * 0.9,
           px + uy * proj.radius * 0.9, py - ux * proj.radius * 0.9,
           px + ux * tailLen, py + uy * tailLen,
         ]).fill({ color: proj.color, alpha: 0.55 });
 
-        g.poly([
+        targetG.poly([
           px - uy * proj.radius * 0.5, py + ux * proj.radius * 0.5,
           px + uy * proj.radius * 0.5, py - ux * proj.radius * 0.5,
           px + ux * (tailLen * 0.65), py + uy * (tailLen * 0.65),
         ]).fill({ color: 0xfef08a, alpha: 0.85 });
 
-        g.circle(px, py, proj.radius * 1.25).fill({ color: proj.color, alpha: 0.45 });
-        g.circle(px, py, proj.radius).fill(0x292524);
-        g.circle(px, py, proj.radius).stroke({ width: 2.5, color: proj.color });
-        g.circle(px - 2, py - 2, proj.radius * 0.45).fill(0xfef08a);
+        targetG.circle(px, py, proj.radius * 1.25).fill({ color: proj.color, alpha: 0.45 });
+        targetG.circle(px, py, proj.radius).fill(0x292524);
+        targetG.circle(px, py, proj.radius).stroke({ width: 2.5, color: proj.color });
+        targetG.circle(px - 2, py - 2, proj.radius * 0.45).fill(0xfef08a);
         particleSystem.spawnTrail(px, py, proj.color);
       } else if (proj.radius >= 8) {
         // Đá tảng Máy Bắn Đá: Khối đá cuội to tròn có bóng đổ & vệt bụi
@@ -1550,12 +2496,35 @@ export class GameRenderer {
   // ==========================================
 
   private drawParticles(): void {
-    const g = this.particleGraphics;
-    g.clear();
+    const normal = this.particleGraphics;
+    const glowG = this.particleGlowGraphics;
+    normal.clear();
+    glowG.clear();
 
     for (const p of particleSystem.activeParticles) {
-      if (p.shape === 'CIRCLE') {
+      if (p.alpha <= 0.01) continue;
+      const g = p.additive ? glowG : normal;
+      if (p.shape === 'CIRCLE' || p.shape === 'SMOKE') {
         g.circle(p.x, p.y, p.size).fill({ color: p.color, alpha: p.alpha });
+      } else if (p.shape === 'GLOW') {
+        // Quầng sáng 3 lớp: ngoài nhạt → lõi sáng
+        g.circle(p.x, p.y, p.size).fill({ color: p.color, alpha: p.alpha * 0.22 });
+        g.circle(p.x, p.y, p.size * 0.6).fill({ color: p.color, alpha: p.alpha * 0.42 });
+        g.circle(p.x, p.y, p.size * 0.28).fill({ color: 0xffffff, alpha: p.alpha * 0.85 });
+      } else if (p.shape === 'STREAK') {
+        // Vệt tia lửa kéo dài theo hướng bay
+        const len = Math.min(26, Math.hypot(p.vx, p.vy) * 0.035 + p.size * 0.6);
+        const sp = Math.hypot(p.vx, p.vy) || 1;
+        const ux = p.vx / sp;
+        const uy = p.vy / sp;
+        g.moveTo(p.x - ux * len, p.y - uy * len)
+          .lineTo(p.x, p.y)
+          .stroke({ width: Math.max(1.2, p.size * 0.32), color: p.color, alpha: p.alpha, cap: 'round' });
+      } else if (p.shape === 'DEBRIS') {
+        const c = Math.cos(p.rotation) * p.size;
+        const s = Math.sin(p.rotation) * p.size;
+        g.poly([p.x - c + s * 0.5, p.y - s - c * 0.5, p.x + c + s * 0.5, p.y + s - c * 0.5, p.x + c - s * 0.5, p.y + s + c * 0.5, p.x - c - s * 0.5, p.y - s + c * 0.5])
+          .fill({ color: p.color, alpha: p.alpha });
       } else if (p.shape === 'RING') {
         g.circle(p.x, p.y, p.size).stroke({ width: 3, color: p.color, alpha: p.alpha });
       } else if (p.shape === 'STAR') {
@@ -1586,16 +2555,35 @@ export class GameRenderer {
     const fts = this.world.floatingTexts;
     let poolIdx = 0;
 
-    // Số sát thương bay
+    // Số sát thương bay (cache metadata tránh rasterize lại Canvas2D mỗi frame)
     for (let i = 0; i < fts.length && poolIdx < this.textPool.length; i++) {
       const ft = fts[i]!;
-      const t = this.textPool[poolIdx++]!;
-      t.text = ft.text;
-      t.style.fill = ft.color;
-      t.style.fontSize = 20;
+      const idx = poolIdx++;
+      const t = this.textPool[idx]!;
+      const meta = this.textPoolMeta[idx];
+      const fontSize = ft.isCrit ? CONFIG.damageNumber.critFontSizePx : CONFIG.damageNumber.baseFontSizePx;
+      const strokeW = ft.strokeWidth || 4;
+
+      if (!meta || meta.text !== ft.text) {
+        t.text = ft.text;
+        if (meta) meta.text = ft.text;
+      }
+      if (!meta || meta.fill !== ft.color || meta.fontSize !== fontSize || meta.strokeW !== strokeW) {
+        t.style.fill = ft.color;
+        t.style.fontSize = fontSize;
+        t.style.stroke = { color: 0x000000, width: strokeW };
+        if (meta) {
+          meta.fill = ft.color;
+          meta.fontSize = fontSize;
+          meta.strokeW = strokeW;
+        }
+      }
+
       t.x = ft.x;
       t.y = ft.y;
-      t.alpha = Math.max(0, 1.0 - ft.duration / ft.maxDuration);
+      t.scale.set(ft.scale || 1.0);
+      const lifeRatio = ft.duration / Math.max(0.05, ft.maxDuration);
+      t.alpha = lifeRatio < 0.45 ? 1.0 : Math.max(0, 1.0 - (lifeRatio - 0.45) / 0.55);
       t.visible = true;
     }
 
@@ -1604,12 +2592,25 @@ export class GameRenderer {
       if (poolIdx >= this.textPool.length) break;
       const label = this.summonerLabels.get(unit.id);
       if (label && label.timer > 0) {
-        const t = this.textPool[poolIdx++]!;
-        t.text = `👑 ${label.name}`;
-        t.style.fill = 0xfacc15;
-        t.style.fontSize = 15;
+        const idx = poolIdx++;
+        const t = this.textPool[idx]!;
+        const meta = this.textPoolMeta[idx];
+        const txt = `👑 ${label.name}`;
+        if (!meta || meta.text !== txt) {
+          t.text = txt;
+          if (meta) meta.text = txt;
+        }
+        if (!meta || meta.fill !== 0xfacc15 || meta.fontSize !== 15) {
+          t.style.fill = 0xfacc15;
+          t.style.fontSize = 15;
+          if (meta) {
+            meta.fill = 0xfacc15;
+            meta.fontSize = 15;
+          }
+        }
         t.x = unit.x;
         t.y = this.GROUND_Y - 120;
+        t.scale.set(1.0);
         t.alpha = Math.min(1.0, label.timer);
         t.visible = true;
       }
@@ -1630,20 +2631,57 @@ export class GameRenderer {
     g.clear();
 
     const intro = particleSystem.ultimateIntro;
+    const fxG = this.ultimateFxGraphics;
+    fxG.clear();
     if (!intro.active) {
       if (this.ultimateIntroText) this.ultimateIntroText.visible = false;
       return;
     }
 
-    // Màn đen mờ nhẹ phủ chiến trường (0.55 alpha)
+    const elapsed = intro.duration - intro.timer;
+    const strong = graphicsSettings.get().ultimateFlash;
+
+    // Màn đen mờ phủ chiến trường
     g.rect(0, 0, this.V_WIDTH, this.V_HEIGHT).fill({ color: 0x000000, alpha: 0.65 });
 
-    // Chữ tên tuyệt chiêu hoành tráng
+    if (strong) {
+      const cx = this.V_WIDTH / 2;
+      const cy = this.V_HEIGHT / 2 - 30;
+      // Dải điện ảnh trượt vào từ trên/dưới
+      const barH = 70 * Math.min(1, elapsed / 0.12);
+      g.rect(-400, -400, this.V_WIDTH + 800, 400 + barH).fill({ color: 0x000000, alpha: 0.9 });
+      g.rect(-400, this.V_HEIGHT - barH, this.V_WIDTH + 800, 400 + barH).fill({ color: 0x000000, alpha: 0.9 });
+      g.rect(-400, barH - 3, this.V_WIDTH + 800, 3).fill({ color: intro.themeColor, alpha: 0.9 });
+      g.rect(-400, this.V_HEIGHT - barH, this.V_WIDTH + 800, 3).fill({ color: intro.themeColor, alpha: 0.9 });
+
+      // Vệt tốc độ toả ra từ tâm (Additive) — xoay theo thời gian
+      const rays = 36;
+      const t = particleSystem.time;
+      for (let i = 0; i < rays; i++) {
+        const seed = Math.sin(i * 12.9898) * 43758.5453;
+        const rnd = seed - Math.floor(seed);
+        const a = (i / rays) * Math.PI * 2 + t * 0.6 + rnd * 0.15;
+        const inner = 150 + rnd * 120 + ((t * 900 + rnd * 400) % 220);
+        const outer = inner + 220 + rnd * 260;
+        const w = 0.012 + rnd * 0.02;
+        fxG.poly([
+          cx + Math.cos(a) * inner, cy + Math.sin(a) * inner,
+          cx + Math.cos(a - w) * outer, cy + Math.sin(a - w) * outer,
+          cx + Math.cos(a + w) * outer, cy + Math.sin(a + w) * outer,
+        ]).fill({ color: i % 3 === 0 ? 0xffffff : intro.themeColor, alpha: 0.32 + rnd * 0.3 });
+      }
+      // Quầng sáng sau chữ
+      fxG.ellipse(cx, cy, 380, 70).fill({ color: intro.themeColor, alpha: 0.22 });
+      fxG.ellipse(cx, cy, 240, 42).fill({ color: 0xffffff, alpha: 0.16 });
+    }
+
+    // Chữ tên tuyệt chiêu: "đấm" vào (phóng to → thu về) rồi rung nhịp
     if (this.ultimateIntroText) {
       this.ultimateIntroText.text = `⚡ ${intro.name.toUpperCase()} ⚡`;
       this.ultimateIntroText.style.fill = intro.themeColor;
       this.ultimateIntroText.visible = true;
-      this.ultimateIntroText.scale.set(1.0 + Math.sin(intro.timer * 8) * 0.08);
+      const punch = strong && elapsed < 0.14 ? 1.0 + (1 - elapsed / 0.14) * 0.9 : 1.0;
+      this.ultimateIntroText.scale.set(punch * (1.0 + Math.sin(intro.timer * 8) * 0.08));
     }
   }
 
@@ -1677,6 +2715,43 @@ export class GameRenderer {
       }
     }
     this.customWeaponTextures.clear();
+
+    for (const tex of this.cloudTextureCache.values()) {
+      try {
+        tex.destroy(true);
+      } catch {
+        // ignore
+      }
+    }
+    this.cloudTextureCache.clear();
+
+    for (const tex of this.skyTextureCache.values()) {
+      try {
+        tex.destroy(true);
+      } catch {
+        // ignore
+      }
+    }
+    this.skyTextureCache.clear();
+
+    for (const tex of this.whiteFlashTexCache.values()) {
+      try {
+        tex.destroy(true);
+      } catch {
+        // ignore
+      }
+    }
+    this.whiteFlashTexCache.clear();
+
+    for (const tex of this.slashTextures) {
+      try {
+        tex.destroy(true);
+      } catch {
+        // ignore
+      }
+    }
+    this.slashTextures.length = 0;
+
     this.app?.destroy(true, { children: true });
     this.app = null;
   }

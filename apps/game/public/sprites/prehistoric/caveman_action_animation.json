@@ -9,7 +9,7 @@
     "image": "/sprites/prehistoric/caveman_action_atlas.png",
     "size": {
       "w": 2048,
-      "h": 1024
+      "h": 1280
     }
   },
   "fallback": {
@@ -18,7 +18,7 @@
       256
     ]
   },
-  "frameCount": 32,
+  "frameCount": 36,
   "anchor": {
     "x": 0.5,
     "y": 0.9
@@ -38,8 +38,8 @@
     "idle": {
       "name": "idle",
       "startFrame": 0,
-      "frameCount": 4,
-      "fps": 8,
+      "frameCount": 8,
+      "fps": 10,
       "loop": true
     },
     "walk": {
@@ -54,27 +54,28 @@
       "name": "attack",
       "startFrame": 16,
       "frameCount": 8,
-      "fps": 12,
+      "fps": 16,
       "loop": false,
-      "hitFrame": 2,
+      "hitFrame": 3,
+      "durationsMs": [35, 35, 35, 45, 45, 60, 60, 60],
       "events": [
         {
           "name": "hit",
-          "frame": 2,
-          "atMs": 166,
+          "frame": 3,
+          "atMs": 105,
           "type": "HIT_FRAME"
         },
         {
           "name": "sound_swing",
-          "frame": 1,
-          "atMs": 83,
+          "frame": 2,
+          "atMs": 70,
           "type": "SOUND",
           "sound": "melee_swing"
         },
         {
           "name": "vfx_slash",
-          "frame": 2,
-          "atMs": 166,
+          "frame": 3,
+          "atMs": 105,
           "type": "VFX",
           "vfx": "slash_spark"
         }
@@ -90,8 +91,8 @@
     "die": {
       "name": "die",
       "startFrame": 27,
-      "frameCount": 5,
-      "fps": 10,
+      "frameCount": 9,
+      "fps": 14,
       "loop": false
     }
   }

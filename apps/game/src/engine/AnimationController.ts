@@ -9,6 +9,7 @@
  * - Hỗ trợ hit-stop 0.045s (~3 tick 60Hz) tạo độ đầm va chạm.
  */
 
+import { CONFIG } from '../data/combatFeelConfig';
 import { type AnimationClipConfig, type AnimationEvent, type SpriteConfig } from '../data/sprites';
 
 export type AnimState = 'IDLE' | 'WALK' | 'ATTACK' | 'HURT' | 'DIE';
@@ -75,12 +76,37 @@ export class AnimationController {
   }
 
   /**
-   * Thời lượng (giây) của clip attack: frameCount / fps
+   * Thời lượng (giây) của clip attack: ưu tiên tổng durationsMs (3 pha), fallback frameCount / fps
    */
   public get attackClipDuration(): number {
     const atk = this.spriteConfig?.clips.attack;
-    if (!atk || atk.frameCount <= 0 || atk.fps <= 0) return 0.3;
+    if (!atk || atk.frameCount <= 0) return 0.3;
+    if (atk.durationsMs && atk.durationsMs.length === atk.frameCount) {
+      let sumMs = 0;
+      for (let i = 0; i < atk.durationsMs.length; i++) {
+        sumMs += atk.durationsMs[i]!;
+      }
+      return Math.max(0.05, sumMs / 1000);
+    }
+    if (atk.fps <= 0) return 0.3;
     return atk.frameCount / atk.fps;
+  }
+
+  /**
+   * Thời lượng (giây) của bất kỳ clip nào (DIE, HURT, ATTACK...)
+   */
+  public getClipDuration(clipName: 'idle' | 'walk' | 'attack' | 'hurt' | 'die'): number {
+    const clip = this.spriteConfig?.clips[clipName];
+    if (!clip || clip.frameCount <= 0) return 0.3;
+    if (clip.durationsMs && clip.durationsMs.length === clip.frameCount) {
+      let sumMs = 0;
+      for (let i = 0; i < clip.durationsMs.length; i++) {
+        sumMs += clip.durationsMs[i]!;
+      }
+      return Math.max(0.05, sumMs / 1000);
+    }
+    const fps = clip.fps > 0 ? clip.fps : 10;
+    return clip.frameCount / fps;
   }
 
   /**
@@ -201,15 +227,32 @@ export class AnimationController {
     const frameCount = clip?.frameCount || 4;
     const isLoop = clip?.loop ?? (this.state === 'IDLE' || this.state === 'WALK');
 
-    const prevFrame = this.currentFrameIndex;
+    const hasCustomDurations = Boolean(clip?.durationsMs && clip.durationsMs.length === frameCount);
+    let totalDuration = frameCount / fps;
+    let rawFrame = Math.floor(this.elapsedTime * fps);
+
+    if (hasCustomDurations && clip?.durationsMs) {
+      let sumMs = 0;
+      const elapsedMs = this.elapsedTime * 1000;
+      let resolvedFrame = frameCount - 1;
+      let found = false;
+      for (let i = 0; i < frameCount; i++) {
+        sumMs += clip.durationsMs[i]!;
+        if (!found && elapsedMs < sumMs) {
+          resolvedFrame = i;
+          found = true;
+        }
+      }
+      totalDuration = Math.max(0.05, sumMs / 1000);
+      rawFrame = found ? resolvedFrame : frameCount;
+    }
 
     if (isLoop) {
       // Hoạt ảnh lặp: tính khung bằng thời gian trôi qua, tự bỏ khung khi lag
-      this.currentFrameIndex = Math.floor(this.elapsedTime * fps) % frameCount;
+      this.currentFrameIndex = ((rawFrame % frameCount) + frameCount) % frameCount;
     } else {
       // Hoạt ảnh không lặp (ATTACK, HURT, DIE)
-      const rawFrame = Math.floor(this.elapsedTime * fps);
-      this.currentFrameIndex = Math.min(frameCount - 1, rawFrame);
+      this.currentFrameIndex = Math.min(frameCount - 1, Math.max(0, rawFrame));
 
       if (this.state === 'ATTACK') {
         const hitFrame = this.attackHitFrame;
@@ -217,8 +260,8 @@ export class AnimationController {
         if (this.currentFrameIndex >= hitFrame && !this.hasTriggeredHitThisSwing) {
           this.hasTriggeredHitThisSwing = true;
           triggerHitEvent = true;
-          // Áp dụng hit-stop 0.045s (~3 tick 60Hz)
-          this.hitStopTimer = 0.045;
+          // Hit-stop đóng băng cục bộ khi chạm đòn theo CONFIG (mặc định 60ms)
+          this.hitStopTimer = CONFIG.hitFeedback.hitStopMs / 1000;
           dispatchedEvents.push({
             name: 'hit',
             frame: hitFrame,
@@ -226,7 +269,6 @@ export class AnimationController {
           });
         }
 
-        const totalDuration = frameCount / fps;
         if (this.elapsedTime >= totalDuration) {
           attackFinished = true;
           this.hasTriggeredHitThisSwing = false;
@@ -244,7 +286,6 @@ export class AnimationController {
           this.minDisplayTimer = 0.08;
         }
       } else if (this.state === 'HURT') {
-        const totalDuration = frameCount / fps;
         if (this.elapsedTime >= totalDuration && this.minDisplayTimer <= 0) {
           const next = this.queuedState || 'IDLE';
           this.queuedState = null;
@@ -254,8 +295,8 @@ export class AnimationController {
           this.lastDispatchedFrame = -1;
         }
       } else if (this.state === 'DIE') {
-        // DIE dừng lại ở khung cuối cùng
-        this.currentFrameIndex = frameCount - 1;
+        // Phát tuần tự toàn bộ 8-10 frame DIE rồi dừng nguyên ở frame cuối (ngã nằm đất)
+        this.currentFrameIndex = Math.min(frameCount - 1, Math.max(0, rawFrame));
       }
     }
 
@@ -282,9 +323,9 @@ export class AnimationController {
   }
 
   /**
-   * Kích hoạt hit-stop từ bên ngoài (ví dụ vũ khí nặng, đạn nổ)
+   * Kích hoạt hit-stop từ bên ngoài (ví dụ mục tiêu bị đánh đóng băng 60ms)
    */
-  public applyHitStop(durationSec: number = 0.045): void {
+  public applyHitStop(durationSec: number = CONFIG.hitFeedback.hitStopMs / 1000): void {
     this.hitStopTimer = Math.max(this.hitStopTimer, durationSec);
   }
 }

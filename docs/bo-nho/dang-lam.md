@@ -1,25 +1,27 @@
 # Giấy Nhớ Việc Đang Làm (dang-lam.md)
 
 ## 1. Trạng Thái Hiện Tại
-- **Module:** Nâng Cấp Hệ Thống Animation & Combat Đồ Họa Đỉnh Cao (Theo Chuẩn Age of War).
-- **Trạng thái:** **HOÀN THÀNH NHÂN VẬT MẪU CAVEMAN (PHASE 1 - 4 DONE)**
-- **Thành quả cốt lõi:**
-  1. **Giải quyết dứt điểm lỗi Turnaround:** Tạo Sprite Sheet Action Frames thật 100% cho Caveman (`caveman_action_atlas.png`, 24 frames chân thật: Idle thở, Walk sải bước chân, Attack vung bổ chùy dộng đất + Slash Arc, Hurt giật nảy, Die ngã sõng soài).
-  2. **State Machine FSM Priority:** Chuyển sang bảng độ ưu tiên số tường minh (`DIE: 100`, `HURT: 80`, `ATTACK: 60`, `WALK: 40`, `IDLE: 10`), bảo vệ clip đánh không bị ngắt, hàng đợi chuyển trạng thái mượt.
-  3. **Tách biệt Hurtbox vs Hitbox:** Đo cự ly vật lý bằng `hurtbox.width` độc lập với kích thước canvas atlas, triệt tiêu lỗi đánh trúng không khí.
-  4. **Animation Event System:** Quét event `HIT_FRAME`, `SOUND`, `VFX`, hit-stop 0.045s (~3 ticks 60Hz) tạo cảm giác đòn đánh lực và nặng.
-  5. **Procedural Secondary Motion:** Tích hợp chuyển động cơ thể nhún nhảy `proceduralBobY` và lắc góc `proceduralRot` theo nhịp sải chân bám đất trong `Renderer.ts`.
-  6. **Eval Test:** 56/56 unit test PASS 100% (51 tests cũ + 5 tests mới AN-001..AN-005), Monorepo typecheck sạch 100%.
+- **Module:** Nâng Cấp Hệ Thống Animation, Game Feel & Hiệu Năng 60Hz Vòng 2 (`A -> B -> C -> D -> E` trên Caveman `stone_melee`).
+- **Trạng thái:** **HOÀN THÀNH & NGHIỆM THU VÒNG 2 (EVAL 12/12 FILES, 69/69 TESTS PASS, BUILD 1.11s, 0 LỖI PLAYWRIGHT)**
+- **Thành quả cốt lõi Vòng 2 (`A -> B -> C -> D -> E`):**
+  1. **A — Chẩn đoán & Tối ưu Ngoài Canvas (`GameLoop.ts`, `World.ts`, `Renderer.ts`, `HUD.tsx`, `App.tsx`):**
+     - Mở rộng bảng F3 (`logicTimeMs`, `renderTimeMs`, `hudDomTimeMs`, `domTouchesPerFrame`, `gcPauseMs`, `simSteps`, `droppedSteps`).
+     - Dirty-check `computeHudSignature()` trước `notifySubscribers()`, gom ghi DOM/F3 vào `onBatchDomUpdate`, bỏ `filter`/`backdropFilter` động, đổi thanh HP & Minimap sang GPU `transform: scaleX / translate3d`, tái sử dụng buffer không cấp phát mỗi frame, giới hạn `maxStepsPerFrame = 2` và xả phần accumulator dư (`dropExcessAccumulator = true`).
+     - F3 thực đo (8 lính, Playwright không quay video): `Logic: 0.18 ms | Render: 1.84 ms | HUD/DOM: 0.04 ms | DOM/frame: 0 | GC pause: 0.00 ms | Steps bù: 2/2 (Drop: 54) | VRAM: 38.00 MB` (SwiftShader headless `16 FPS / 64.47 ms`).
+  2. **B — Đòn đánh không đồng bộ (`Unit.ts`, `World.ts`):** Random cooldown gốc `±12%` khi spawn, lệch pha đòn đầu `0–150ms` (kèm ngưỡng tách trực diện `45ms`), jitter mỗi đòn sau `±30ms`. Log `DUEL_IMPACT_LOGS` 1v1 xác nhận lệch `tick 134 (2233ms)` vs `tick 141 (2350ms)`.
+  3. **C — VFX khi chạm đòn 3 mức (`ParticleSystem.ts`, `World.ts`, `combatFeelConfig.ts`):** Thang `NORMAL` (55ms hit-stop, cung 60–80ms scale `0.95`, 6–7 tia lửa) / `HEAVY` (chu kỳ mỗi 3 đòn hoặc crit/tank, 85ms hit-stop, cung 85–115ms scale `1.32`, 8–10 tia lửa + GLOW, rung `2.5px`) / `KILL` (95ms hit-stop, cung 100–125ms scale `1.52`, 9–10 tia lửa + GLOW, rung `3.0px`); 3 biến thể xoay `±15°`, additive blending tại điểm chạm vũ khí.
+  4. **D — Đám đông dễ đọc (`Unit.ts`, `Renderer.ts`, `combatFeelConfig.ts`):** Separation tối thiểu `74px` / thị giác `98px`, lệch trục Y `±6px`, Y-sort theo chân thực, khóa tiền tuyến không đan xen 2 phe (kèm `overlapGuard` bỏ qua địch đã tụt lại phía sau), hiện thanh máu cho toàn bộ đơn vị đang `ATTACK`, giảm sáng `~8%` (`0xebebeb`) cho quân phía sau không giao tranh.
+  5. **E — Dọn nhiễu & Phần thưởng (`Renderer.ts`, `ParticleSystem.ts`, `HUD.tsx`):** Mũi tên xanh pulse chỉ hiển thị ở đơn vị P1, pool xu vàng + XP orb giới hạn `40` hạt với tự động gộp xu (`mergedCount > 1` vẽ viền hào quang vàng) bay Bezier về HUD kèm pulse.
+  6. **Eval Verification:** `typecheck` 0 lỗi, `12/12` file Vitest (`69/69` tests) PASS (gồm sửa xong 2 case `[BUG-N01]` & `[BUG-N02]` và 7 tests mới trong `combatFeelUpgrade.test.ts`), `build` 1.11s, `productionLeak` PASS, Playwright quay video & benchmark (`ERRORS_COUNT: 0`).
 
 ---
 
 ## 2. Các Bước Kế Tiếp
-- [x] **Bước 1:** Tích hợp Sprite Sheet Caveman có đầy đủ Action Frames (`apps/game/scripts/generate_caveman_action_sheet.py`).
-- [x] **Bước 2:** Xây dựng AnimationController trên PixiJS v8 (`apps/game/src/engine/AnimationController.ts`).
-- [x] **Bước 3:** Đồng bộ Attack Frame với Combat Event (`apps/game/src/engine/Unit.ts`).
-- [x] **Bước 4:** Bổ sung procedural weapon rotation và body motion (`apps/game/src/engine/Renderer.ts`).
-- [ ] **Bước 5:** Kiểm thử giao chiến 2 đội quân Caveman trên chiến tuyến và tinh chỉnh visual.
-- [ ] **Bước 6:** Chuẩn hóa thành template mở rộng sang Knight, Archer và toàn bộ 24 đơn vị quân.
+- [x] **Bước 1:** Tạo cấu hình `CONFIG`, Sprite Atlas Xanh/Đỏ `36` khung (`DIE` 9F, `caveman_action_atlas.png` & `caveman_action_atlas_red.png`), bảng debug `F3` & vòng lặp 60Hz.
+- [x] **Bước 2:** Triển khai đầy đủ theo thứ tự `0 -> 2 -> 1 -> 3 -> 5 -> 7 -> 4 -> 6 -> 8 -> 9` (đã giữ nguyên 100% gameplay logic: sát thương, tốc độ nền, chi phí, đối xứng headless).
+- [x] **Bước 3:** Tối ưu render pipeline (`skySprite` 1-draw, panorama tile culling, HUD không blur, lazy preload theo kỷ nguyên) đạt `1.9–2.1 ms` JS render và `38 MB` VRAM.
+- [x] **Bước 4:** Kiểm thử toàn bộ (`typecheck`, `67/67` tests, `build`, `productionLeak`, Playwright + `read_file` ảnh chụp).
+- [ ] **Bước 5:** Chờ người dùng duyệt mẫu Caveman (`stone_melee`) để nhân rộng sang 3 đơn vị còn lại của Thời Tiền Sử và các Kỷ Nguyên sau.
 
 ---
 
@@ -142,3 +144,9 @@
 
 - **Đồng Bộ Git Remote:**
   - Đã kết nối và đẩy toàn bộ mã nguồn dự án lên GitHub Repository: https://github.com/DNTt30/toptop_duan.git (nhánh main và nhánh fix/build-lobby, clean working tree).
+
+- **Giai Đoạn A — Hệ Thống Bóng Đổ Mềm & VFX Chất Lượng Cao (HOÀN THÀNH) ✅:**
+  - **Cài đặt Đồ họa (`apps/game/src/data/graphicsSettings.ts`, `apps/game/src/ui/GraphicsSettingsSection.tsx`, `apps/game/src/ui/StartSettingsModal.tsx`):** Gom toàn bộ tùy chỉnh hiệu ứng vào 1 mục `🎨 Đồ Họa & Hiệu Ứng` trong bảng Cài đặt (Menu chính & Trong trận): Bóng đổ, Hạt hiệu ứng, Ánh sáng phát quang, Chớp trắng khi trúng đòn, Vệt dư ảnh khi chém, Rung màn hình (+ mức Nhẹ/Vừa/Mạnh), Lóe sáng chiêu cuối. Lưu RAM cache an toàn, đồng bộ cross-tab.
+  - **Hệ thống Hạt & Trauma Shake (`apps/game/src/engine/ParticleSystem.ts`):** Object pool 900 hạt (`MAX_PARTICLES = 900`, swap-remove O(1)), bổ sung lớp `GLOW` / `STREAK` / `SMOKE` / `DEBRIS` với cờ `additive`, vụ nổ đa tầng, bụi gót chân, tia lửa chém (`spawnSlashArc`), chớp đầu nòng (`spawnMuzzleFlash`), hạt môi trường theo kỷ nguyên (`spawnAmbient`), lóe sáng toàn màn (`screenFlash`) và rung mượt đa tần (`getShakeOffset`).
+  - **Renderer Bóng Đổ & VFX (`apps/game/src/engine/Renderer.ts`):** Bóng elip mềm 3 lớp (`drawSoftShadow`) cho lính, thành trì và đạn bay trên lớp `shadowGraphics`; lớp phát sáng Additive (`particleGlowGraphics`, `projGlowGraphics`); chớp trắng thật bằng sprite chồng (`unitFlashContainer`); 3 bóng dư ảnh màu phe khi lao tới chém (`ghostContainer`); Squash & Stretch khi trúng đòn/tấn công; dải điện ảnh + 36 tia tốc độ tỏa tâm khi tung Chiêu cuối.
+  - **World Reset (`apps/game/src/engine/World.ts`):** Xóa sạch hạt còn sót (`particleSystem.clear()`) khi bắt đầu ván mới.

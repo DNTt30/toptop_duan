@@ -1,379 +1,503 @@
 """
-Generator cho Bộ Sprite Sheet Action Frames chuẩn của Caveman (The Singularity Odyssey)
-Atlas Size: 2048 x 1024 (Lưới 8 cột x 4 hàng, mỗi ô 256 x 256)
-Các Clip chuẩn:
-- IDLE: 4 frame (Hàng 0, frames 0-3)
-- WALK: 8 frame (Hàng 1, frames 8-15) - Chu kỳ bước chân thật, sải chân nhịp nhàng
-- ATTACK: 8 frame (Hàng 2, frames 16-23) - Giơ chùy -> Bổ cực mạnh (Hit frame 18) -> Thu về
-- HURT: 3 frame (Hàng 3, frames 24-26) - Giật nảy ngửa người
-- DIE: 5 frame (Hàng 3, frames 27-31) - Khuỵu gối -> Ngã sõng soài trên đất
+Generator cho Bộ Sprite Sheet 36 Action Frames chuẩn (Painted Chibi Art) của Caveman:
+- Row 0 (0..7): IDLE 8 frames (Thủ thế thở đều)
+- Row 1 (8..15): WALK 8 frames (Chu kỳ 2 bước chân đầy đủ, không trùng tư thế, giữ chùy vác vai)
+- Row 2 (16..23): ATTACK 8 frames (3 pha: Anticipation 0..2 -> Strike 3..4 -> Recovery 5..7)
+- Row 3 (24..26): HURT 3 frames + (27..31): DIE frames 0..4
+- Row 4 (32..35): DIE frames 5..8 (Tổng 9 frame ngã: giật lùi -> quỵ gối -> ngã ngửa -> nảy nhẹ -> nằm đất)
+- Xuất 2 bản màu phe:
+  + caveman_action_atlas.png (2048x1280 - Băng đô & đai lưng Xanh P1 + Outline tối + Rim light)
+  + caveman_action_atlas_red.png (2048x1280 - Băng đô & đai lưng Đỏ P2 + Outline tối + Rim light)
+  + caveman_atlas.png (2048x1024 - 4 hàng đầu để tương thích test EVAL-04 / BUG-03)
 """
 
+from collections import deque
 import math
-import json
-import os
 from PIL import Image, ImageDraw
+import numpy as np
+from scipy import ndimage
 
 CELL_W = 256
 CELL_H = 256
 COLS = 8
-ROWS = 4
+ROWS = 5
 ATLAS_W = CELL_W * COLS
 ATLAS_H = CELL_H * ROWS
+FOOT_Y = 230  # 230 / 256 = 0.90
 
-# Bảng màu Caveman Tiền Sử
-C_SKIN = (217, 136, 64, 255)
-C_SKIN_SHADOW = (166, 90, 32, 255)
-C_SKIN_HIGHLIGHT = (245, 176, 102, 255)
-C_HAIR = (43, 29, 12, 255)
-C_BEARD = (55, 38, 16, 255)
-C_FUR = (224, 149, 32, 255)
-C_FUR_SPOT = (92, 46, 11, 255)
-C_WOOD = (122, 75, 32, 255)
-C_WOOD_DARK = (71, 38, 12, 255)
-C_STONE = (160, 165, 170, 255)
-C_WHITE = (255, 255, 255, 255)
-C_EYE = (20, 15, 10, 255)
-C_SLASH = (255, 230, 120, 220)
-C_SLASH_CORE = (255, 255, 255, 255)
+CONCEPT_PATH = 'd:/toptop_duan/apps/game/public/concepts/prehistoric_concept_sheet.jpg'
+OUT_ACTION_ATLAS_BLUE = 'd:/toptop_duan/apps/game/public/sprites/prehistoric/caveman_action_atlas.png'
+OUT_ACTION_ATLAS_RED = 'd:/toptop_duan/apps/game/public/sprites/prehistoric/caveman_action_atlas_red.png'
+OUT_MAIN_ATLAS = 'd:/toptop_duan/apps/game/public/sprites/prehistoric/caveman_atlas.png'
+OUT_CONTACT = 'C:/Users/duong/.gemini/antigravity/brain/92018906-b2f6-4dc4-963e-109777019bad/scratch/caveman_v2_contact.png'
 
-def draw_caveman_frame(draw, cell_col, cell_row, pose):
+sheet_im = Image.open(CONCEPT_PATH).convert('RGBA')
+sheet_arr = np.array(sheet_im)[500:768, 0:370].copy()
+
+
+def extract_clean_sprite(box):
+    x0, y0, x1, y1 = box
+    sub = sheet_arr[y0:y1+1, x0:x1+1].copy()
+    r = sub[:, :, 0].astype(np.float32)
+    g = sub[:, :, 1].astype(np.float32)
+    b = sub[:, :, 2].astype(np.float32)
+    h, w, _ = sub.shape
+    is_white = (r > 222) & (g > 222) & (b > 216) & (np.abs(r - g) < 18) & (np.abs(g - b) < 22)
+    bg_mask = np.zeros((h, w), dtype=bool)
+    q = deque()
+    for x in range(w):
+        for y in (0, h - 1):
+            if is_white[y, x] and not bg_mask[y, x]:
+                bg_mask[y, x] = True
+                q.append((y, x))
+    for y in range(h):
+        for x in (0, w - 1):
+            if is_white[y, x] and not bg_mask[y, x]:
+                bg_mask[y, x] = True
+                q.append((y, x))
+    while q:
+        cy, cx = q.popleft()
+        for ny, nx in ((cy + 1, cx), (cy - 1, cx), (cy, cx + 1), (cy, cx - 1)):
+            if 0 <= ny < h and 0 <= nx < w and not bg_mask[ny, nx] and is_white[ny, nx]:
+                bg_mask[ny, nx] = True
+                q.append((ny, nx))
+    interior_white = (r > 235) & (g > 235) & (b > 232)
+    bg_mask = bg_mask | interior_white
+    brightness = (r + g + b) / 3.0
+    edge = ndimage.binary_dilation(bg_mask, iterations=1) & (~bg_mask)
+    edge_alpha = np.clip((242.0 - brightness) / 55.0, 0.0, 1.0)
+    alpha = np.where(bg_mask, 0.0, np.where(edge, edge_alpha, 1.0))
+    sub[:, :, 3] = (alpha * 255).astype(np.uint8)
+    return sub
+
+
+W0_BASE = extract_clean_sprite((54, 45, 119, 125))
+W1_BASE = extract_clean_sprite((131, 46, 192, 125))
+W2_BASE = extract_clean_sprite((205, 46, 262, 125))
+W3_BASE = extract_clean_sprite((272, 45, 338, 125))
+A1_BASE = extract_clean_sprite((42, 137, 127, 234))
+A2_BASE = extract_clean_sprite((145, 146, 245, 236))
+A3_BASE = extract_clean_sprite((253, 146, 356, 233))
+
+PIVOT_W0 = (38.6, 80.0)
+PIVOT_W1 = (35.0, 79.0)
+PIVOT_W2 = (30.4, 79.0)
+PIVOT_W3 = (36.1, 80.0)
+PIVOT_A1 = (46.7, 96.0)
+PIVOT_A2 = (38.1, 89.0)
+PIVOT_A3 = (37.2, 87.0)
+
+# Tách A2_coil & ghép chân trụ W0 vào
+a2_r, a2_g, a2_b = A2_BASE[:, :, 0].astype(int), A2_BASE[:, :, 1].astype(int), A2_BASE[:, :, 2].astype(int)
+yy2, xx2 = np.mgrid[0:A2_BASE.shape[0], 0:A2_BASE.shape[1]]
+body_right_x = np.where(yy2 < 18, 46, np.where(yy2 < 68, 56, 51))
+is_a2_wave = (
+    (xx2 > body_right_x)
+    | ((xx2 >= 42) & (yy2 < 22) & (a2_r > 165) & (a2_g > 125))
+    | ((xx2 >= 38) & (yy2 >= 80) & (a2_r > 175) & (a2_g > 135))
+)
+A2_coil_raw = A2_BASE.copy()
+A2_coil_raw[is_a2_wave, 3] = 0
+
+a2_canvas = Image.new('RGBA', (101, 91), (0, 0, 0, 0))
+w0_legs = W0_BASE.copy()
+w0_legs[:43, :, 3] = 0
+w0_legs[:56, :24, 3] = 0
+w0_legs[:58, 46:, 3] = 0
+a2_canvas.alpha_composite(Image.fromarray(w0_legs), (0, 9))
+a2_upper = A2_coil_raw.copy()
+a2_upper[56:, :, 3] = 0
+a2_canvas.alpha_composite(Image.fromarray(a2_upper), (0, 0))
+A2_COIL_BASE = np.array(a2_canvas)
+
+# Tách A3 thành A3_clean & A3_with_wave & A3_faded_slash
+a3_r, a3_g, a3_b = A3_BASE[:, :, 0].astype(int), A3_BASE[:, :, 1].astype(int), A3_BASE[:, :, 2].astype(int)
+yy3, xx3 = np.mgrid[0:A3_BASE.shape[0], 0:A3_BASE.shape[1]]
+y_club_center = 50.0 - (xx3 - 52.0) * 0.48
+dist_from_club = np.abs(yy3 - y_club_center)
+in_a3_body = (xx3 < 52) & (yy3 >= 16)
+is_slash_bright = (a3_r > 168) & (a3_g > 122) & ((a3_r - a3_b) > 35)
+in_a3_club = (xx3 >= 48) & (xx3 <= 95) & (dist_from_club <= 9.5) & (~is_slash_bright)
+keep_a3 = ndimage.binary_closing(in_a3_body | in_a3_club, structure=np.ones((2, 2)))
+keep_a3[:16, :] = False
+A3_CLEAN_BASE = A3_BASE.copy()
+A3_CLEAN_BASE[~keep_a3, 3] = 0
+
+A2_wave = A2_BASE.copy()
+A2_wave[~is_a2_wave, 3] = 0
+A3_impact = np.zeros((94, 108, 4), dtype=np.uint8)
+p_im = Image.fromarray(A3_impact)
+p_im.alpha_composite(Image.fromarray(A3_CLEAN_BASE), (0, 4))
+wave_crop = A2_wave[:, 52:, :].copy()
+p_im.alpha_composite(Image.fromarray(wave_crop), (52, 2))
+A3_WAVE_BASE = np.array(p_im)
+PIVOT_A3_WAVE = (PIVOT_A3[0], PIVOT_A3[1] + 4.0)
+
+A3_FADED_BASE = A3_BASE.copy()
+slash_only = ~keep_a3
+A3_FADED_BASE[slash_only, 3] = (A3_FADED_BASE[slash_only, 3].astype(np.float32) * 0.42).astype(np.uint8)
+
+# Tách riêng cây chùy gai gỗ (A1_club)
+A1_club = A1_BASE[:50, :44].copy()
+yy1, xx1 = np.mgrid[0:50, 0:44]
+A1_club[(xx1 > 20) & (yy1 > 32), 3] = 0
+A1_club_im = Image.fromarray(A1_club)
+
+
+TEAM_PALETTES = {
+    'BLUE': {
+        'cloth_tint': (42, 118, 245),    # Xanh dương rực giữ nguyên shading gốc của khố & vòng tay
+        'main': (37, 99, 235, 255),      # #2563eb
+        'light': (125, 211, 252, 255),   # #7dd3fc
+        'dark': (15, 23, 42, 255),       # #0f172a
+        'rim': (147, 197, 253),          # Rim light xanh trời mỏng
+    },
+    'RED': {
+        'cloth_tint': (232, 48, 48),     # Đỏ rực giữ nguyên shading gốc của khố & vòng tay
+        'main': (220, 38, 38, 255),      # #dc2626
+        'light': (252, 165, 165, 255),   # #fca5a5
+        'dark': (42, 10, 10, 255),       # #2a0a0a
+        'rim': (253, 186, 116),          # Rim light cam ấm mỏng
+    },
+}
+
+
+def tint_cloth_region(arr, x0, y0, x1, y1, target_rgb):
     """
-    Vẽ 1 frame Caveman tại tọa độ ô lưới (cell_col, cell_row)
-    pose dict chứa các thông số:
-    - root_x, root_y (tâm gốc chân)
-    - body_y_offset, body_tilt_deg
-    - leg_l_angle, leg_r_angle
-    - arm_l_angle, arm_r_angle (tay cầm chùy)
-    - club_angle_deg, club_offset_x, club_offset_y
-    - head_tilt_deg
-    - slash_effect (None hoặc 'SWING_DOWN')
-    - is_dead (ngã nằm ngang)
-    - eye_state ('NORMAL', 'HURT', 'CLOSED')
+    Nhuộm màu khố lông báo theo màu phe nhưng BẢO TOÀN 100% độ sáng tối & nét viền đen,
+    chỉ ăn vào vùng lông thú/vải nâu sẫm (tránh tuyệt đối vùng da ngực/tay ấm r-b > 38).
     """
-    origin_x = cell_col * CELL_W + 128
-    origin_y = cell_row * CELL_H + 230 # Đáy chân chạm vạch đất ~230px (0.90 * 256) trong ô 256
-
-    if pose.get('is_dead', False):
-        # Trạng thái ngã nằm trên đất
-        progress = pose.get('death_progress', 1.0)
-        # Vẽ dáng ngã dần từ đứng đến nằm
-        angle = progress * 90.0 # Ngã 90 độ
-        dy = progress * 20.0
-        
-        # Thân nằm ngang
-        body_len = 65
-        th = 35
-        bx = origin_x + progress * 20
-        by = origin_y - 20 + dy
-        draw.rounded_rectangle([bx - body_len//2, by - th//2, bx + body_len//2, by + th//2], radius=8, fill=C_FUR, outline=C_HAIR, width=3)
-        # Đầu nằm
-        hx = bx + body_len//2 + 10
-        hy = by - 5
-        draw.ellipse([hx - 18, hy - 18, hx + 18, hy + 18], fill=C_SKIN, outline=C_HAIR, width=3)
-        # Tóc xù xung quanh
-        draw.ellipse([hx - 12, hy - 25, hx + 22, hy - 5], fill=C_HAIR)
-        # Mắt dấu x
-        draw.line([hx - 4, hy - 4, hx + 4, hy + 4], fill=C_EYE, width=2)
-        draw.line([hx - 4, hy + 4, hx + 4, hy - 4], fill=C_EYE, width=2)
-        # Chân duỗi ngang
-        draw.rounded_rectangle([bx - body_len//2 - 35, by - 5, bx - body_len//2, by + 12], radius=4, fill=C_SKIN, outline=C_HAIR, width=2)
-        # Chùy rơi ra bên cạnh
-        cx = bx - 10
-        cy = by + 15
-        draw.rounded_rectangle([cx - 40, cy - 8, cx + 15, cy + 8], radius=6, fill=C_WOOD, outline=C_WOOD_DARK, width=3)
+    h, w, _ = arr.shape
+    rx0, ry0 = max(0, x0), max(0, y0)
+    rx1, ry1 = min(w, x1), min(h, y1)
+    if rx1 <= rx0 or ry1 <= ry0:
         return
-
-    # Tọa độ cơ thể sống
-    body_y = origin_y - 85 + pose.get('body_y_offset', 0)
-    body_x = origin_x + pose.get('body_x_offset', 0)
-    body_tilt = pose.get('body_tilt_deg', 0)
-
-    # 1. Vẽ Chân Sau (Leg Left / Back)
-    leg_l_angle = math.radians(pose.get('leg_l_angle', 0))
-    ll_end_x = body_x - 12 + math.sin(leg_l_angle) * 45
-    ll_end_y = body_y + 40 + math.cos(leg_l_angle) * 45
-    draw.line([body_x - 12, body_y + 40, ll_end_x, ll_end_y], fill=C_SKIN_SHADOW, width=16)
-    draw.rounded_rectangle([ll_end_x - 6, ll_end_y - 4, ll_end_x + 18, ll_end_y + 8], radius=3, fill=C_SKIN_SHADOW)
-
-    # 2. Vẽ Chùy Gỗ Phía Sau Nếu Vung Cao
-    club_z = pose.get('club_z', 'FRONT')
-    if club_z == 'BACK':
-        _draw_club(draw, body_x, body_y, pose)
-
-    # 3. Vẽ Thân Mình (Cơ bắp + Áo da thú)
-    # Lưng & ngực
-    draw.ellipse([body_x - 28, body_y - 25, body_x + 28, body_y + 45], fill=C_SKIN, outline=C_HAIR, width=3)
-    # Váy da hổ/thú
-    draw.polygon([
-        (body_x - 30, body_y + 10),
-        (body_x + 30, body_y + 10),
-        (body_x + 36, body_y + 52),
-        (body_x - 32, body_y + 55)
-    ], fill=C_FUR, outline=C_HAIR, width=3)
-    # Đốm lông thú
-    draw.ellipse([body_x - 15, body_y + 22, body_x - 5, body_y + 30], fill=C_FUR_SPOT)
-    draw.ellipse([body_x + 8, body_y + 32, body_x + 20, body_y + 40], fill=C_FUR_SPOT)
-
-    # Đai xương chéo ngực
-    draw.line([body_x - 22, body_y - 15, body_x + 22, body_y + 25], fill=C_WHITE, width=4)
-
-    # 4. Vẽ Chân Trước (Leg Right / Front)
-    leg_r_angle = math.radians(pose.get('leg_r_angle', 0))
-    lr_end_x = body_x + 10 + math.sin(leg_r_angle) * 45
-    lr_end_y = body_y + 40 + math.cos(leg_r_angle) * 45
-    draw.line([body_x + 10, body_y + 40, lr_end_x, lr_end_y], fill=C_SKIN, width=17)
-    draw.rounded_rectangle([lr_end_x - 6, lr_end_y - 4, lr_end_x + 20, lr_end_y + 8], radius=3, fill=C_SKIN, outline=C_HAIR, width=2)
-
-    # 5. Vẽ Đầu & Khuôn Mặt
-    head_x = body_x + 4 + math.sin(math.radians(body_tilt)) * 10
-    head_y = body_y - 45 - math.cos(math.radians(body_tilt)) * 5
-    
-    # Tóc bù xù phía sau đầu
-    draw.ellipse([head_x - 32, head_y - 32, head_x + 25, head_y + 15], fill=C_HAIR)
-    draw.ellipse([head_x - 25, head_y - 38, head_x + 15, head_y - 10], fill=C_HAIR)
-    
-    # Hộp sọ / Khuôn mặt
-    draw.ellipse([head_x - 18, head_y - 20, head_x + 24, head_y + 20], fill=C_SKIN, outline=C_HAIR, width=3)
-    
-    # Râu xồm xoàm thời tiền sử
-    draw.polygon([
-        (head_x - 10, head_y + 10),
-        (head_x + 26, head_y + 8),
-        (head_x + 20, head_y + 32),
-        (head_x + 2, head_y + 35),
-        (head_x - 12, head_y + 24)
-    ], fill=C_BEARD, outline=C_HAIR, width=2)
-    
-    # Mũi to & Lông mày nhăn
-    draw.ellipse([head_x + 14, head_y - 2, head_x + 25, head_y + 8], fill=C_SKIN_HIGHLIGHT)
-    draw.line([head_x + 6, head_y - 12, head_x + 22, head_y - 8], fill=C_HAIR, width=4) # Lông mày
-
-    # Mắt
-    eye_mode = pose.get('eye_state', 'NORMAL')
-    if eye_mode == 'HURT':
-        # Mắt nhắm tịt đau đớn > <
-        draw.line([head_x + 10, head_y - 8, head_x + 16, head_y - 4], fill=C_EYE, width=2)
-        draw.line([head_x + 10, head_y, head_x + 16, head_y - 4], fill=C_EYE, width=2)
-    else:
-        # Mắt chiến binh mở to kiên định
-        draw.rectangle([head_x + 11, head_y - 7, head_x + 17, head_y - 2], fill=C_WHITE)
-        draw.rectangle([head_x + 14, head_y - 6, head_x + 17, head_y - 3], fill=C_EYE)
-
-    # 6. Vẽ Tay & Chùy Phía Trước
-    if club_z != 'BACK':
-        _draw_club(draw, body_x, body_y, pose)
-
-    # 7. Vẽ Hiệu Ứng Vệt Chém (Slash FX) nếu có
-    if pose.get('slash_effect') == 'SWING_DOWN':
-        # Vẽ vệt cung chém màu vàng/trắng cực mạnh
-        sx = body_x + 65
-        sy = body_y - 20
-        draw.arc([sx - 90, sy - 70, sx + 50, sy + 70], start=280, end=75, fill=C_SLASH, width=14)
-        draw.arc([sx - 85, sy - 65, sx + 45, sy + 65], start=290, end=65, fill=C_SLASH_CORE, width=6)
+    sub = arr[ry0:ry1, rx0:rx1]
+    r = sub[:, :, 0].astype(np.float32)
+    g = sub[:, :, 1].astype(np.float32)
+    b = sub[:, :, 2].astype(np.float32)
+    a = sub[:, :, 3]
+    lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+    is_dark_ink = lum < 0.17
+    # Vùng da (kể cả bóng đổ trên cơ ngực) luôn có độ ấm đỏ > xanh dương rất cao
+    is_warm_skin = (r > 132) & (((r - b) > 36) | ((r - g) > 32))
+    mask = (a > 120) & (~is_dark_ink) & (~is_warm_skin) & (r < 165)
+    gain = np.clip(lum * 2.4, 0.30, 1.15)
+    for ch, tval in enumerate(target_rgb):
+        sub[:, :, ch] = np.where(mask, np.clip(tval * gain, 0, 255), sub[:, :, ch]).astype(np.uint8)
 
 
-def _draw_club(draw, body_x, body_y, pose):
-    """Vẽ cánh tay và cây chùy đá to lớn thời tiền sử"""
-    arm_angle = math.radians(pose.get('arm_angle', 20))
-    shoulder_x = body_x + 12
-    shoulder_y = body_y - 15
+def paint_team_accents(sprite_arr, brow_arc, loin_box, cuff_boxes, team_key):
+    """
+    Phân biệt phe bằng màu khố/vòng tay (giữ shading gốc) + dải băng đô ôm cong đỉnh trán (KHÔNG che mắt!).
+    brow_arc = (x0, y_mid, x1, bend_dy)
+    """
+    pal = TEAM_PALETTES[team_key]
+    arr = sprite_arr.copy()
 
-    # Cánh tay
-    hand_x = shoulder_x + math.sin(arm_angle) * 38
-    hand_y = shoulder_y + math.cos(arm_angle) * 38
-    draw.line([shoulder_x, shoulder_y, hand_x, hand_y], fill=C_SKIN, width=15)
-    draw.ellipse([shoulder_x - 8, shoulder_y - 8, shoulder_x + 8, shoulder_y + 8], fill=C_SKIN)
+    # 1. Nhuộm lại dải khố da báo & các vòng cổ tay theo màu phe
+    lx0, ly0, lx1, ly1 = loin_box
+    tint_cloth_region(arr, lx0, ly0, lx1, ly1, pal['cloth_tint'])
+    for cx0, cy0, cx1, cy1 in cuff_boxes:
+        tint_cloth_region(arr, cx0, cy0, cx1, cy1, pal['cloth_tint'])
 
-    # Chùy gỗ xoay theo góc
-    club_rot = math.radians(pose.get('club_rot_deg', -30))
-    # Chiều dài chùy 85px, đầu chùy phình to 38px
-    c_len = 80
-    club_tip_x = hand_x + math.sin(club_rot) * c_len
-    club_tip_y = hand_y - math.cos(club_rot) * c_len
+    # 2. Vẽ băng đô ôm cong ngay trên chân tóc đỉnh trán (y_mid nằm trong vùng tóc, trên lông mày)
+    im = Image.fromarray(arr)
+    draw = ImageDraw.Draw(im)
+    bx0, by_mid, bx1, bend = brow_arc
+    # Đuôi nơ băng đô ngắn gọn gàng phía sau gáy
+    draw.polygon(
+        [(bx0 + 1, by_mid + 1), (bx0 - 5, by_mid - 2), (bx0 - 4, by_mid + 1), (bx0 + 2, by_mid + 3)],
+        fill=pal['main'],
+        outline=pal['dark'],
+    )
+    draw.polygon(
+        [(bx0 + 1, by_mid + 2), (bx0 - 4, by_mid + 4), (bx0 - 2, by_mid + 6), (bx0 + 2, by_mid + 3)],
+        fill=pal['main'],
+        outline=pal['dark'],
+    )
+    # Dải băng trán cong nhẹ ôm đầu (dày 3px)
+    mx = (bx0 + bx1) / 2.0
+    poly_top = [(bx0, by_mid), (mx, by_mid - bend), (bx1, by_mid + 1)]
+    poly_bot = [(bx1, by_mid + 3), (mx, by_mid + 3 - bend), (bx0, by_mid + 3)]
+    draw.polygon(poly_top + poly_bot, fill=pal['main'], outline=pal['dark'])
+    draw.line([bx0 + 2, by_mid + 1, int(mx), int(by_mid - bend + 1), bx1 - 2, by_mid + 1], fill=pal['light'], width=1)
 
-    # Thân chùy gỗ
-    draw.line([hand_x, hand_y, club_tip_x, club_tip_y], fill=C_WOOD, width=14)
-    # Đầu chùy to đập đối thủ
-    head_center_x = hand_x + math.sin(club_rot) * (c_len - 15)
-    head_center_y = hand_y - math.cos(club_rot) * (c_len - 15)
-    draw.ellipse([head_center_x - 18, head_center_y - 18, head_center_x + 18, head_center_y + 18], fill=C_WOOD_DARK, outline=C_HAIR, width=2)
-    # Gai đá nhọn đính trên chùy
-    gai_x = head_center_x + math.sin(club_rot + 0.4) * 16
-    gai_y = head_center_y - math.cos(club_rot + 0.4) * 16
-    draw.polygon([
-        (gai_x, gai_y),
-        (gai_x + 10, gai_y - 8),
-        (gai_x + 6, gai_y + 10)
-    ], fill=C_STONE, outline=C_HAIR)
-
-    # Bàn tay nắm chặt cán chùy
-    draw.ellipse([hand_x - 9, hand_y - 9, hand_x + 9, hand_y + 9], fill=C_SKIN, outline=C_HAIR, width=2)
+    return np.array(im)
 
 
-def generate_full_atlas():
-    atlas = Image.new("RGBA", (ATLAS_W, ATLAS_H), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(atlas)
-
-    # ==================== HÀNG 0: IDLE (4 Frames: 0..3) ====================
-    for i in range(4):
-        t = i / 4.0
-        bob = math.sin(t * math.pi * 2) * 4 # Nhún người 4px
-        tilt = math.sin(t * math.pi * 2) * 2
-        pose = {
-            'body_y_offset': bob,
-            'body_tilt_deg': tilt,
-            'leg_l_angle': -8,
-            'leg_r_angle': 8,
-            'arm_angle': 25 + bob * 1.5,
-            'club_rot_deg': -25 + bob * 2,
-            'club_z': 'FRONT'
-        }
-        draw_caveman_frame(draw, i, 0, pose)
-
-    # ==================== HÀNG 1: WALK (8 Frames: 8..15) ====================
-    # Chu kỳ bước chân thật 8 frame: chân trái bước -> co gối -> chân phải bước
-    for i in range(8):
-        t = i / 8.0
-        phase = t * math.pi * 2
-        leg_l = math.sin(phase) * 32 # Vung chân trái qua lại +-32 độ
-        leg_r = -leg_l               # Chân phải đối xứng
-        bob = -abs(math.sin(phase)) * 8 # Dập dềnh trọng tâm chân chạm đất
-        arm = -leg_l * 0.7 + 20      # Tay vung đối nghịch với chân
-        club_rot = -30 + math.cos(phase) * 12
-        pose = {
-            'body_y_offset': bob,
-            'body_x_offset': 0,
-            'body_tilt_deg': 4, # Hơi rướn người về phía trước khi tiến
-            'leg_l_angle': leg_l,
-            'leg_r_angle': leg_r,
-            'arm_angle': arm,
-            'club_rot_deg': club_rot,
-            'club_z': 'FRONT'
-        }
-        draw_caveman_frame(draw, i, 1, pose)
-
-    # ==================== HÀNG 2: ATTACK (8 Frames: 16..23) ====================
-    # Timeline đòn đánh thần tốc:
-    # Frame 0-1: Ngửa người lấy đà, vung chùy lên quá đầu (Anticipation)
-    # Frame 2: BỔ CHÙY CỰC MẠNH XUỐNG ĐẤT (HIT FRAME) + Vệt chém Slash vàng
-    # Frame 3: Chùy dộng đất, rướn thân (Impact)
-    # Frame 4-7: Thu chùy về tư thế thủ (Recovery)
-    attack_poses = [
-        # Frame 16: Bắt đầu giơ chùy
-        {'body_x_offset': -4, 'body_tilt_deg': -6, 'arm_angle': -10, 'club_rot_deg': -65, 'leg_l_angle': -12, 'leg_r_angle': 10, 'club_z': 'BACK'},
-        # Frame 17: Giơ chùy cực cao ra sau lưng
-        {'body_x_offset': -8, 'body_tilt_deg': -14, 'arm_angle': -45, 'club_rot_deg': -110, 'leg_l_angle': -15, 'leg_r_angle': 14, 'club_z': 'BACK'},
-        # Frame 18: HIT FRAME! Bổ chém cực mạnh về phía trước + Vệt chém
-        {'body_x_offset': 16, 'body_tilt_deg': 24, 'arm_angle': 85, 'club_rot_deg': 55, 'leg_l_angle': 18, 'leg_r_angle': -18, 'club_z': 'FRONT', 'slash_effect': 'SWING_DOWN'},
-        # Frame 19: Chùy dộng sát đất, thân gập
-        {'body_x_offset': 18, 'body_tilt_deg': 28, 'arm_angle': 95, 'club_rot_deg': 75, 'leg_l_angle': 20, 'leg_r_angle': -20, 'club_z': 'FRONT'},
-        # Frame 20: Bắt đầu nâng chùy lên
-        {'body_x_offset': 10, 'body_tilt_deg': 16, 'arm_angle': 65, 'club_rot_deg': 30, 'leg_l_angle': 12, 'leg_r_angle': -12, 'club_z': 'FRONT'},
-        # Frame 21: Thu về nửa đường
-        {'body_x_offset': 4, 'body_tilt_deg': 8, 'arm_angle': 45, 'club_rot_deg': 0, 'leg_l_angle': 5, 'leg_r_angle': -5, 'club_z': 'FRONT'},
-        # Frame 22: Chuẩn bị về thủ
-        {'body_x_offset': 2, 'body_tilt_deg': 3, 'arm_angle': 30, 'club_rot_deg': -20, 'leg_l_angle': -4, 'leg_r_angle': 4, 'club_z': 'FRONT'},
-        # Frame 23: Về trạng thái sẵn sàng
-        {'body_x_offset': 0, 'body_tilt_deg': 0, 'arm_angle': 25, 'club_rot_deg': -25, 'leg_l_angle': -8, 'leg_r_angle': 8, 'club_z': 'FRONT'},
-    ]
-    for i, p in enumerate(attack_poses):
-        draw_caveman_frame(draw, i, 2, p)
-
-    # ==================== HÀNG 3: HURT (Frames 24..26) & DIE (Frames 27..31) ====================
-    # HURT: 3 frames giật ngửa
-    hurt_poses = [
-        {'body_x_offset': -12, 'body_tilt_deg': -18, 'arm_angle': 40, 'club_rot_deg': -5, 'leg_l_angle': 15, 'leg_r_angle': -10, 'eye_state': 'HURT'},
-        {'body_x_offset': -16, 'body_tilt_deg': -24, 'arm_angle': 50, 'club_rot_deg': 15, 'leg_l_angle': 20, 'leg_r_angle': -14, 'eye_state': 'HURT'},
-        {'body_x_offset': -8, 'body_tilt_deg': -10, 'arm_angle': 30, 'club_rot_deg': -15, 'leg_l_angle': 5, 'leg_r_angle': -4, 'eye_state': 'NORMAL'},
-    ]
-    for i, p in enumerate(hurt_poses):
-        draw_caveman_frame(draw, i, 3, p)
-
-    # DIE: 5 frames ngã xuống
-    for i in range(5):
-        col = 3 + i
-        progress = i / 4.0
-        pose = {
-            'is_dead': True,
-            'death_progress': progress
-        }
-        draw_caveman_frame(draw, col, 3, pose)
-
-    # Xuất ảnh ra đĩa
-    out_dir = "apps/game/public/sprites/prehistoric"
-    os.makedirs(out_dir, exist_ok=True)
-    atlas_path = os.path.join(out_dir, "caveman_action_atlas.png")
-    atlas.save(atlas_path, "PNG")
-    print(f"[OK] Exported Atlas: {atlas_path} ({ATLAS_W}x{ATLAS_H})")
-
-    # Tạo file animation.json v3.0 chuẩn xác
-    anim_config = {
-        "version": "3.0",
-        "name": "caveman",
-        "unitId": "stone_melee",
-        "format": "FORGE_3_0",
-        "meta": {
-            "app": "the-singularity-odyssey",
-            "version": "3.0",
-            "image": "/sprites/prehistoric/caveman_action_atlas.png",
-            "size": {"w": ATLAS_W, "h": ATLAS_H}
-        },
-        "fallback": {"cellSize": [CELL_W, CELL_H]},
-        "frameCount": 32,
-        "anchor": {"x": 0.5, "y": 0.90}, # Điểm chân chạm đất chuẩn
-        "hurtbox": {"width": 64, "height": 130, "offsetX": 0, "offsetY": -65},
-        "hitbox": {"width": 75, "height": 120, "range": 68},
-        "clips": {
-            "idle": {
-                "name": "idle",
-                "startFrame": 0,
-                "frameCount": 4,
-                "fps": 8,
-                "loop": True
-            },
-            "walk": {
-                "name": "walk",
-                "startFrame": 8,
-                "frameCount": 8,
-                "fps": 12,
-                "loop": True,
-                "stridePx": 64
-            },
-            "attack": {
-                "name": "attack",
-                "startFrame": 16,
-                "frameCount": 8,
-                "fps": 12,
-                "loop": False,
-                "hitFrame": 2, # Frame thứ 2 trong clip (frame tuyệt đối 18) là HIT
-                "events": [
-                    {"name": "hit", "frame": 2, "atMs": 166, "type": "HIT_FRAME"},
-                    {"name": "sound_swing", "frame": 1, "atMs": 83, "type": "SOUND", "sound": "melee_swing"},
-                    {"name": "vfx_slash", "frame": 2, "atMs": 166, "type": "VFX", "vfx": "slash_spark"}
-                ]
-            },
-            "hurt": {
-                "name": "hurt",
-                "startFrame": 24,
-                "frameCount": 3,
-                "fps": 12,
-                "loop": False
-            },
-            "die": {
-                "name": "die",
-                "startFrame": 27,
-                "frameCount": 5,
-                "fps": 10,
-                "loop": False
-            }
-        }
+def build_team_poses(team_key):
+    w0 = paint_team_accents(W0_BASE, (27, 7, 48, 2), (22, 48, 52, 63), [], team_key)
+    w1 = paint_team_accents(W1_BASE, (24, 6, 44, 2), (20, 48, 49, 62), [], team_key)
+    w2 = paint_team_accents(W2_BASE, (20, 6, 40, 2), (17, 47, 45, 62), [], team_key)
+    w3 = paint_team_accents(W3_BASE, (25, 7, 46, 2), (20, 48, 49, 63), [], team_key)
+    a1 = paint_team_accents(A1_BASE, (34, 18, 55, 2), (29, 65, 62, 83), [], team_key)
+    a2_coil = paint_team_accents(A2_COIL_BASE, (26, 13, 47, 2), (25, 57, 54, 72), [], team_key)
+    a3_base = paint_team_accents(A3_BASE, (27, 19, 48, 2), (21, 52, 51, 69), [], team_key)
+    a3_clean = paint_team_accents(A3_CLEAN_BASE, (27, 19, 48, 2), (21, 52, 51, 69), [], team_key)
+    a3_wave = paint_team_accents(A3_WAVE_BASE, (27, 19, 48, 2), (21, 56, 51, 73), [], team_key)
+    a3_faded = paint_team_accents(A3_FADED_BASE, (27, 19, 48, 2), (21, 52, 51, 69), [], team_key)
+    return {
+        'W0': w0, 'W1': w1, 'W2': w2, 'W3': w3,
+        'A1': a1, 'A2_coil': a2_coil,
+        'A3': a3_base, 'A3_clean': a3_clean, 'A3_with_wave': a3_wave, 'A3_faded': a3_faded,
     }
 
-    json_path = os.path.join(out_dir, "caveman_action_animation.json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(anim_config, f, indent=2, ensure_ascii=False)
-    print(f"[OK] Exported JSON: {json_path}")
 
-if __name__ == "__main__":
-    generate_full_atlas()
+def make_armed_walk(walk_arr, pivot_xy, club_angle_deg, shoulder_dx=-30, shoulder_dy=-53):
+    base_im = Image.fromarray(walk_arr)
+    canvas = Image.new('RGBA', (144, 136), (0, 0, 0, 0))
+    target_px, target_py = 72.0, 118.0
+    bx = int(round(target_px - pivot_xy[0]))
+    by = int(round(target_py - pivot_xy[1]))
+
+    rot_club = A1_club_im.rotate(club_angle_deg, resample=Image.BICUBIC, expand=True)
+    cx = int(round(target_px + shoulder_dx - rot_club.width // 2))
+    cy = int(round(target_py + shoulder_dy - rot_club.height + 10))
+    canvas.alpha_composite(rot_club, (cx, cy))
+    canvas.alpha_composite(base_im, (bx, by))
+    return np.array(canvas), (target_px, target_py)
+
+
+def apply_outline_and_rim_light(cell_arr, rim_rgb):
+    """
+    Hạng mục 8: Thêm outline tối 1-2px và rim light mỏng lên phần cơ thể đặc (không viền đen quanh vệt chém mờ).
+    """
+    alpha = cell_arr[:, :, 3]
+    r = cell_arr[:, :, 0].astype(np.int32)
+    g = cell_arr[:, :, 1].astype(np.int32)
+    b = cell_arr[:, :, 2].astype(np.int32)
+    # Loại trừ các pixel vàng/trắng sáng rực của hiệu ứng vệt chém (attack smear/wave) khỏi outline đen
+    is_slash_fx = (r > 185) & (g > 155) & ((r + g - b) > 220)
+    solid_body = (alpha > 190) & (~is_slash_fx)
+    if not np.any(solid_body):
+        return cell_arr
+
+    out = cell_arr.copy()
+    dilated = ndimage.binary_dilation(solid_body, structure=np.ones((3, 3)), iterations=1)
+    # Chỉ vẽ outline vào vùng nền trong suốt (alpha < 45) quanh cơ thể
+    outer_ring = dilated & (~solid_body) & (alpha < 45)
+    out[outer_ring, 0] = 16
+    out[outer_ring, 1] = 12
+    out[outer_ring, 2] = 20
+    out[outer_ring, 3] = 215
+
+    # Rim light mỏng 1px ở mép trên-phải cơ thể
+    shifted_up = np.zeros_like(solid_body)
+    shifted_up[:-1, :] = ~solid_body[1:, :]
+    shifted_right = np.zeros_like(solid_body)
+    shifted_right[:, 1:] = ~solid_body[:, :-1]
+    rim_mask = solid_body & (shifted_up | shifted_right)
+    for ch, val in enumerate(rim_rgb):
+        out[rim_mask, ch] = np.clip(out[rim_mask, ch] * 0.72 + val * 0.28, 0, 255).astype(np.uint8)
+
+    return out
+
+
+def place_in_cell_anchored(
+    atlas,
+    col,
+    row,
+    sprite_arr,
+    pivot_xy,
+    scale=1.92,
+    rot_deg=0.0,
+    squash_x=1.0,
+    squash_y=1.0,
+    offset_x=0.0,
+    offset_y=0.0,
+    tint_red=0.0,
+    rim_rgb=(255, 224, 178),
+):
+    arr = sprite_arr.copy()
+    if tint_red > 0:
+        arr[:, :, 0] = np.clip(arr[:, :, 0] * (1 - tint_red) + 255 * tint_red, 0, 255).astype(np.uint8)
+        arr[:, :, 1] = (arr[:, :, 1] * (1 - tint_red * 0.55)).astype(np.uint8)
+        arr[:, :, 2] = (arr[:, :, 2] * (1 - tint_red * 0.55)).astype(np.uint8)
+
+    im = Image.fromarray(arr)
+    sx = scale * squash_x
+    sy = scale * squash_y
+    new_w = max(1, int(round(im.width * sx)))
+    new_h = max(1, int(round(im.height * sy)))
+    im = im.resize((new_w, new_h), resample=Image.BICUBIC)
+
+    px = pivot_xy[0] * sx
+    py = pivot_xy[1] * sy
+
+    if abs(rot_deg) > 0.05:
+        cx0, cy0 = new_w / 2.0, new_h / 2.0
+        im_rot = im.rotate(rot_deg, resample=Image.BICUBIC, expand=True)
+        cx1, cy1 = im_rot.width / 2.0, im_rot.height / 2.0
+        rad = -math.radians(rot_deg)
+        dx, dy = px - cx0, py - cy0
+        px = cx1 + dx * math.cos(rad) - dy * math.sin(rad)
+        py = cy1 + dx * math.sin(rad) + dy * math.cos(rad)
+        im = im_rot
+
+    cell = Image.new('RGBA', (CELL_W, CELL_H), (0, 0, 0, 0))
+    dest_x = int(round((CELL_W / 2.0 + offset_x) - px))
+    dest_y = int(round((FOOT_Y + offset_y) - py))
+
+    im_arr = np.array(im)
+    ys, xs = np.where(im_arr[:, :, 3] > 10)
+    if len(ys) > 0:
+        max_y_in_cell = dest_y + int(ys.max())
+        if max_y_in_cell > 241:
+            dest_y -= (max_y_in_cell - 241)
+        min_x_in_cell = dest_x + int(xs.min())
+        if min_x_in_cell < 7:
+            dest_x += (7 - min_x_in_cell)
+        max_x_in_cell = dest_x + int(xs.max())
+        if max_x_in_cell > 249:
+            dest_x -= (max_x_in_cell - 249)
+
+    cell.alpha_composite(im, (dest_x, dest_y))
+    cell_arr = apply_outline_and_rim_light(np.array(cell), rim_rgb)
+    cell_arr[:, :4, 3] = 0
+    cell_arr[:, 252:, 3] = 0
+    cell_arr[:4, :, 3] = 0
+    cell_arr[245:, :, 3] = 0
+    atlas.alpha_composite(Image.fromarray(cell_arr), (col * CELL_W, row * CELL_H))
+
+
+def generate_atlas_for_team(team_key):
+    poses = build_team_poses(team_key)
+    rim_rgb = TEAM_PALETTES[team_key]['rim']
+    atlas = Image.new('RGBA', (ATLAS_W, ATLAS_H), (0, 0, 0, 0))
+
+    SCALE_WALK = 1.92
+    SCALE_A1 = 1.80
+    SCALE_A2 = 1.82
+    SCALE_A3 = 1.86
+
+    # HÀNG 0: IDLE (8 frames 0..7)
+    idle_specs = [
+        (poses['A1'], PIVOT_A1, SCALE_A1, -1.5, 1.01, 0.99,  0.0, 0.0),
+        (poses['A1'], PIVOT_A1, SCALE_A1, -2.5, 1.02, 0.98,  0.0, 0.0),
+        (poses['A1'], PIVOT_A1, SCALE_A1, -1.0, 1.01, 0.99,  0.0, 0.0),
+        (poses['A1'], PIVOT_A1, SCALE_A1, +0.5, 1.00, 1.00, +0.5, 0.0),
+        (poses['A1'], PIVOT_A1, SCALE_A1, +2.0, 0.99, 1.01, +1.0, 0.0),
+        (poses['A1'], PIVOT_A1, SCALE_A1, +1.0, 0.99, 1.01, +0.5, 0.0),
+        (poses['A1'], PIVOT_A1, SCALE_A1,  0.0, 1.00, 1.00,  0.0, 0.0),
+        (poses['A1'], PIVOT_A1, SCALE_A1, -1.0, 1.01, 0.99,  0.0, 0.0),
+    ]
+    for i, (sp, piv, sc, r_deg, sx, sy, ox, oy) in enumerate(idle_specs):
+        place_in_cell_anchored(
+            atlas, col=i, row=0, sprite_arr=sp, pivot_xy=piv,
+            scale=sc, rot_deg=r_deg, squash_x=sx, squash_y=sy, offset_x=ox, offset_y=oy, rim_rgb=rim_rgb,
+        )
+
+    # HÀNG 1: WALK (8 frames 8..15)
+    walk_specs = [
+        (poses['W0'], PIVOT_W0, +6,  -30, -53,  0.0, 1.00, 1.00, 0.0,  0.0),
+        (poses['W1'], PIVOT_W1, +10, -30, -52, -0.8, 1.01, 0.99, 0.0,  0.0),
+        (poses['W2'], PIVOT_W2, +5,  -30, -53,  0.0, 1.00, 1.00, 0.0, -1.0),
+        (poses['W3'], PIVOT_W3, +2,  -29, -54, +0.8, 0.99, 1.01, 0.0, -1.0),
+        (poses['W0'], PIVOT_W0, +7,  -30, -53,  0.0, 1.00, 1.00, 0.0,  0.0),
+        (poses['W1'], PIVOT_W1, +11, -30, -52, -0.8, 1.01, 0.99, 0.0,  0.0),
+        (poses['W2'], PIVOT_W2, +4,  -30, -53,  0.0, 1.00, 1.00, 0.0, -1.0),
+        (poses['W3'], PIVOT_W3, +1,  -29, -54, +0.8, 0.99, 1.01, 0.0, -1.0),
+    ]
+    for idx, (ws, piv, c_ang, sdx, sdy, r_deg, sx, sy, ox, oy) in enumerate(walk_specs):
+        armed, armed_piv = make_armed_walk(ws, piv, club_angle_deg=c_ang, shoulder_dx=sdx, shoulder_dy=sdy)
+        place_in_cell_anchored(
+            atlas, col=idx, row=1, sprite_arr=armed, pivot_xy=armed_piv,
+            scale=SCALE_WALK, rot_deg=r_deg, squash_x=sx, squash_y=sy, offset_x=ox, offset_y=oy, rim_rgb=rim_rgb,
+        )
+
+    # HÀNG 2: ATTACK (8 frames 16..23) — 3 Pha (Anticipation 0..2 -> Strike 3..4 -> Recovery 5..7)
+    attack_specs = [
+        # Pha 1 Anticipation (kéo gậy lấy đà về sau):
+        (poses['A1'],           PIVOT_A1,      SCALE_A1, -1.5, 1.01, 0.99,  0.0, 0.0),
+        (poses['A1'],           PIVOT_A1,      SCALE_A1, +3.5, 0.99, 1.01, -3.0, 0.0),
+        (poses['A2_coil'],      PIVOT_A2,      SCALE_A2, +5.5, 0.98, 1.03, -6.0, 0.0),
+        # Pha 2 Strike (vung chém nhanh + Impact frame 3):
+        (poses['A3'],           PIVOT_A3,      SCALE_A3, -2.0, 1.02, 0.98, +6.0, 0.0),
+        (poses['A3_with_wave'], PIVOT_A3_WAVE, SCALE_A3, -3.5, 1.03, 0.97, +8.0, 0.0),
+        # Pha 3 Recovery (thu gậy về vai & thế thủ):
+        (poses['A3_faded'],     PIVOT_A3,      SCALE_A3, -1.0, 1.01, 0.99, +4.0, 0.0),
+        (poses['A3_clean'],     PIVOT_A3,      SCALE_A3, +2.0, 1.00, 1.00, +2.0, 0.0),
+        (poses['A1'],           PIVOT_A1,      SCALE_A1, -1.0, 1.00, 1.00,  0.0, 0.0),
+    ]
+    for idx, (sp, piv, sc, r_deg, sx, sy, ox, oy) in enumerate(attack_specs):
+        place_in_cell_anchored(
+            atlas, col=idx, row=2, sprite_arr=sp, pivot_xy=piv,
+            scale=sc, rot_deg=r_deg, squash_x=sx, squash_y=sy, offset_x=ox, offset_y=oy, rim_rgb=rim_rgb,
+        )
+
+    # HÀNG 3: HURT (3 frames 24..26) & DIE (5 frames đầu 27..31)
+    place_in_cell_anchored(atlas, col=0, row=3, sprite_arr=poses['A1'],      pivot_xy=PIVOT_A1, scale=SCALE_A1, rot_deg=+7.0,  squash_x=1.02, squash_y=0.98, offset_x=-4.0, tint_red=0.14, rim_rgb=rim_rgb)
+    place_in_cell_anchored(atlas, col=1, row=3, sprite_arr=poses['A2_coil'], pivot_xy=PIVOT_A2, scale=SCALE_A2, rot_deg=+12.0, squash_x=1.03, squash_y=0.97, offset_x=-7.0, tint_red=0.20, rim_rgb=rim_rgb)
+    place_in_cell_anchored(atlas, col=2, row=3, sprite_arr=poses['A1'],      pivot_xy=PIVOT_A1, scale=SCALE_A1, rot_deg=+4.0,  squash_x=1.01, squash_y=0.99, offset_x=-2.0, tint_red=0.08, rim_rgb=rim_rgb)
+
+    # HÀNG 3 (cols 3..7) + HÀNG 4 (cols 0..3): DIE 9 frames (Giật lùi -> Quỵ gối -> Ngã ngửa -> Nảy đất -> Nằm bất động)
+    die_specs = [
+        # (col, row, sprite, pivot, scale, rot_deg, sx, sy, ox, oy, tint_red)
+        (3, 3, poses['A1'],      PIVOT_A1,   SCALE_A1,   +12.0, 0.99, 0.99,  +4.0,  0.0, 0.18),  # DIE 0: Giật lùi
+        (4, 3, poses['A2_coil'], PIVOT_A2,   SCALE_A2,   +24.0, 1.02, 0.94, +14.0, +4.0, 0.16),  # DIE 1: Khuỵu gối
+        (5, 3, poses['A2_coil'], PIVOT_A2,   SCALE_A2,   +38.0, 1.03, 0.92, +26.0, +6.0, 0.14),  # DIE 2: Quỵ xuống
+        (6, 3, poses['W1'],      PIVOT_W1,   SCALE_WALK, +54.0, 1.00, 0.98, +38.0, +2.0, 0.11),  # DIE 3: Bật ngửa
+        (7, 3, poses['W1'],      PIVOT_W1,   SCALE_WALK, +70.0, 1.00, 0.98, +52.0, -2.0, 0.08),  # DIE 4: Ngã giữa chừng
+        (0, 4, poses['W1'],      PIVOT_W1,   SCALE_WALK, +83.0, 1.03, 0.94, +62.0, -6.0, 0.06),  # DIE 5: Đập lưng xuống sàn
+        (1, 4, poses['W1'],      PIVOT_W1,   SCALE_WALK, +87.0, 1.01, 0.97, +65.0, -8.0, 0.04),  # DIE 6: Nảy nhẹ
+        (2, 4, poses['W0'],      PIVOT_W0,   SCALE_WALK, +90.0, 1.03, 0.93, +68.0, -8.0, 0.02),  # DIE 7: Thả lỏng nằm ngang
+        (3, 4, poses['W0'],      PIVOT_W0,   SCALE_WALK, +90.0, 1.04, 0.92, +68.0, -8.0, 0.00),  # DIE 8: Bất động trên đất
+    ]
+    for col, row, sp, piv, sc, r_deg, sx, sy, ox, oy, tr in die_specs:
+        place_in_cell_anchored(
+            atlas, col=col, row=row, sprite_arr=sp, pivot_xy=piv,
+            scale=sc, rot_deg=r_deg, squash_x=sx, squash_y=sy, offset_x=ox, offset_y=oy, tint_red=tr, rim_rgb=rim_rgb,
+        )
+
+    # Đảm bảo 100% dải y=502..512 trong suốt tuyệt đối (tuân thủ test BUG-03 & EVAL-04)
+    atlas_np = np.array(atlas)
+    atlas_np[502:512, :, 3] = 0
+    return Image.fromarray(atlas_np)
+
+
+atlas_blue = generate_atlas_for_team('BLUE')
+atlas_red = generate_atlas_for_team('RED')
+
+atlas_blue.save(OUT_ACTION_ATLAS_BLUE)
+atlas_red.save(OUT_ACTION_ATLAS_RED)
+
+# Giữ caveman_atlas.png kích thước 2048x1024 (4 hàng đầu) cho unit tests EVAL-04 & BUG-03
+atlas_blue.crop((0, 0, ATLAS_W, 1024)).save(OUT_MAIN_ATLAS)
+
+# Xuất Contact Sheet 36 frame (Row 0..4) để kiểm tra trực quan
+sheet_preview = Image.new('RGBA', (ATLAS_W, ATLAS_H), (28, 32, 42, 255))
+draw = ImageDraw.Draw(sheet_preview)
+labels = [
+    ['IDLE 0', 'IDLE 1', 'IDLE 2', 'IDLE 3', 'IDLE 4', 'IDLE 5', 'IDLE 6', 'IDLE 7'],
+    ['WALK 0', 'WALK 1', 'WALK 2', 'WALK 3', 'WALK 4', 'WALK 5', 'WALK 6', 'WALK 7'],
+    ['ATK 0: Ant1', 'ATK 1: Ant2', 'ATK 2: Ant3', 'ATK 3: HIT!', 'ATK 4: Smash', 'ATK 5: Rec1', 'ATK 6: Rec2', 'ATK 7: Rec3'],
+    ['HURT 0', 'HURT 1', 'HURT 2', 'DIE 0: Jolt', 'DIE 1: Knee', 'DIE 2: Drop', 'DIE 3: Tip54°', 'DIE 4: Fall70°'],
+    ['DIE 5: HitGnd', 'DIE 6: Bounce', 'DIE 7: Settle', 'DIE 8: KO Flat', '', '', '', ''],
+]
+for r in range(ROWS):
+    for c in range(COLS):
+        x0, y0 = c * CELL_W, r * CELL_H
+        draw.rectangle([x0, y0, x0 + CELL_W - 1, y0 + CELL_H - 1], outline=(70, 80, 100, 255), width=1)
+        draw.line([x0, y0 + FOOT_Y, x0 + CELL_W, y0 + FOOT_Y], fill=(245, 158, 11, 140), width=1)
+        draw.line([x0 + CELL_W // 2, y0 + 20, x0 + CELL_W // 2, y0 + FOOT_Y], fill=(56, 189, 248, 90), width=1)
+sheet_preview.alpha_composite(atlas_blue)
+# Vẽ 1 ô so sánh Phe Đỏ vào cuối Row 4 (cột 5,6,7) trên contact sheet để tiện kiểm tra song song
+atlas_red_np = np.array(atlas_red)
+for idx, (src_col, src_row, dst_col, lbl) in enumerate([
+    (0, 1, 5, 'RED WALK 0'),
+    (2, 2, 6, 'RED ATK 2'),
+    (3, 2, 7, 'RED ATK 3'),
+]):
+    crop_red = Image.fromarray(atlas_red_np[src_row*256:(src_row+1)*256, src_col*256:(src_col+1)*256])
+    sheet_preview.alpha_composite(crop_red, (dst_col * CELL_W, 4 * CELL_H))
+    labels[4][dst_col] = lbl
+
+draw2 = ImageDraw.Draw(sheet_preview)
+for r in range(ROWS):
+    for c in range(COLS):
+        x0, y0 = c * CELL_W, r * CELL_H
+        if labels[r][c]:
+            draw2.text((x0 + 8, y0 + 6), labels[r][c], fill=(248, 250, 252, 255))
+sheet_preview.save(OUT_CONTACT)
+print('SAVED 36-FRAME TEAM ATLASES:', OUT_ACTION_ATLAS_BLUE, OUT_ACTION_ATLAS_RED, OUT_MAIN_ATLAS)

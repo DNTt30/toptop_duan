@@ -10,6 +10,7 @@
 
 
 
+import { CONFIG } from './combatFeelConfig';
 import { getUnitFrameOverride, type UnitFrameConfig } from './frameOverrides';
 
 
@@ -62,7 +63,9 @@ export interface SpriteConfig {
 
   age: number;
 
-  atlasPath: string; // Đường dẫn tới file Atlas PNG
+  atlasPath: string; // Đường dẫn tới file Atlas PNG (Phe xanh / mặc định)
+
+  redAtlasPath?: string; // Đường dẫn tới file Atlas PNG cho phe Đỏ (P2)
 
   manifestPath?: string; // Đường dẫn tới animation.json (3.0)
 
@@ -145,6 +148,8 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
 
     atlasPath: '/sprites/prehistoric/caveman_action_atlas.png',
 
+    redAtlasPath: '/sprites/prehistoric/caveman_action_atlas_red.png',
+
     manifestPath: '/sprites/prehistoric/caveman_action_animation.json',
 
     format: 'FORGE_3_0',
@@ -156,7 +161,7 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
 
     hitbox: { x: -35, y: -190, width: 70, height: 190 },
 
-    stridePx: 64,
+    stridePx: 48,
 
     targetHeight: 200,
 
@@ -164,7 +169,7 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
 
     clips: {
 
-      idle: { name: 'idle', startFrame: 0, frameCount: 4, fps: 8, loop: true },
+      idle: { name: 'idle', startFrame: 0, frameCount: 8, fps: 10, loop: true },
 
       walk: { name: 'walk', startFrame: 8, frameCount: 8, fps: 12, loop: true, stridePx: 64 },
 
@@ -176,19 +181,21 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
 
         frameCount: 8,
 
-        fps: 12,
+        fps: 16,
 
         loop: false,
 
-        hitFrame: 3,
+        hitFrame: CONFIG.attack.hitFrame,
 
-        events: [{ name: 'hit', frame: 3, atMs: 250 }],
+        durationsMs: [...CONFIG.attack.frameDurationsMs],
+
+        events: [{ name: 'hit', frame: CONFIG.attack.hitFrame, atMs: CONFIG.attack.anticipationMs }],
 
       },
 
       hurt: { name: 'hurt', startFrame: 24, frameCount: 3, fps: 12, loop: false },
 
-      die: { name: 'die', startFrame: 27, frameCount: 3, fps: 10, loop: false },
+      die: { name: 'die', startFrame: 27, frameCount: CONFIG.death.animFrameCount, fps: CONFIG.death.animFps, loop: false },
 
     },
 
@@ -398,7 +405,7 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
 
     hitbox: { x: -35, y: -190, width: 70, height: 190 },
 
-    stridePx: 64,
+    stridePx: 48,
 
     targetHeight: 200,
 
@@ -640,7 +647,7 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
 
     hitbox: { x: -35, y: -190, width: 70, height: 190 },
 
-    stridePx: 64,
+    stridePx: 48,
 
     targetHeight: 200,
 
@@ -1544,7 +1551,7 @@ export const SPRITE_CONFIGS: Record<string, SpriteConfig> = {
 
     hitbox: { x: -35, y: -190, width: 70, height: 190 },
 
-    stridePx: 64,
+    stridePx: 48,
 
     targetHeight: 200,
 

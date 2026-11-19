@@ -3,6 +3,7 @@ import { type BotDifficulty } from '../engine/BotAI';
 import { gameSettings } from '../data/settings';
 import { type NetworkSync } from '../engine/NetworkSync';
 import { type GameMode, type World, type WorldSnapshot } from '../engine/World';
+import { GraphicsSettingsSection } from './GraphicsSettingsSection';
 
 interface StartSettingsModalProps {
   isOpen: boolean;
@@ -112,12 +113,14 @@ export const StartSettingsModal: React.FC<StartSettingsModalProps> = ({
             background: 'rgba(15, 23, 42, 0.96)',
             border: '1.5px solid rgba(56, 189, 248, 0.4)',
             borderRadius: '22px',
-            padding: '24px 26px',
+            padding: '22px 24px',
             boxShadow: '0 24px 60px rgba(0, 0, 0, 0.85)',
             color: '#f8fafc',
             display: 'flex',
             flexDirection: 'column',
-            gap: '14px',
+            gap: '12px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -144,109 +147,96 @@ export const StartSettingsModal: React.FC<StartSettingsModalProps> = ({
 
           <div
             style={{
+              background: 'rgba(30, 41, 59, 0.55)',
+              borderRadius: '14px',
+              padding: '4px 14px',
               display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'rgba(30, 41, 59, 0.75)',
-              padding: '12px 14px',
-              borderRadius: '12px',
+              flexDirection: 'column',
             }}
           >
-            <span style={{ fontWeight: 700, fontSize: '14px', color: '#e2e8f0' }}>Âm Thanh & Nhạc Nền</span>
-            <button
-              type="button"
-              onClick={onToggleMute}
-              style={{
-                background: isMuted ? '#ef4444' : '#16a34a',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '6px 14px',
-                fontWeight: 800,
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
-            >
-              {isMuted ? '🔇 Đang Tắt' : '🔊 Đang Bật'}
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'rgba(30, 41, 59, 0.75)',
-              padding: '12px 14px',
-              borderRadius: '12px',
-            }}
-          >
-            <span style={{ fontWeight: 700, fontSize: '14px', color: '#e2e8f0' }}>Tốc Độ Trận Đấu</span>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              {[1.0, 1.5, 2.0].map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => onSetSpeed(s)}
-                  style={{
-                    background: speed === s ? '#2563eb' : '#334155',
-                    color: '#fff',
-                    border: speed === s ? '1px solid #60a5fa' : 'none',
-                    borderRadius: '8px',
-                    padding: '6px 11px',
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                  }}
-                >
-                  {s}x
-                </button>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid rgba(148, 163, 184, 0.14)' }}>
+              <span style={{ fontWeight: 700, fontSize: '14px', color: '#e2e8f0' }}>Âm Thanh & Nhạc Nền</span>
+              <button
+                type="button"
+                onClick={onToggleMute}
+                style={{
+                  background: isMuted ? '#ef4444' : '#16a34a',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '6px 14px',
+                  fontWeight: 800,
+                  fontSize: '12.5px',
+                  cursor: 'pointer',
+                }}
+              >
+                {isMuted ? '🔇 Đang Tắt' : '🔊 Đang Bật'}
+              </button>
             </div>
-          </div>
 
-          {snapshot.gameMode === 'SOLO' && (
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                background: 'rgba(30, 41, 59, 0.75)',
-                padding: '12px 14px',
-                borderRadius: '12px',
-              }}
-            >
-              <span style={{ fontWeight: 700, fontSize: '14px', color: '#e2e8f0' }}>Độ Khó Máy (Bot)</span>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                {(['EASY', 'NORMAL', 'HARD'] as BotDifficulty[]).map((d) => {
-                  const labels: Record<BotDifficulty, string> = { EASY: 'Dễ', NORMAL: 'Vừa', HARD: 'Khó' };
-                  const active = world.botAI.difficulty === d;
-                  return (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => {
-                        setBotDiff(d);
-                        world.setBotDifficulty(d);
-                      }}
-                      style={{
-                        background: active ? '#d97706' : '#334155',
-                        color: '#fff',
-                        border: active ? '1px solid #fde047' : 'none',
-                        borderRadius: '8px',
-                        padding: '6px 10px',
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                      }}
-                    >
-                      {labels[d]}
-                    </button>
-                  );
-                })}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid rgba(148, 163, 184, 0.14)' }}>
+              <span style={{ fontWeight: 700, fontSize: '14px', color: '#e2e8f0' }}>Tốc Độ Trận Đấu</span>
+              <div style={{ display: 'flex', gap: '5px' }}>
+                {[1.0, 1.5, 2.0].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => onSetSpeed(s)}
+                    style={{
+                      background: speed === s ? '#2563eb' : '#334155',
+                      color: '#fff',
+                      border: speed === s ? '1px solid #60a5fa' : 'none',
+                      borderRadius: '7px',
+                      padding: '5px 10px',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                    }}
+                  >
+                    {s}x
+                  </button>
+                ))}
               </div>
             </div>
-          )}
+
+            {snapshot.gameMode === 'SOLO' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid rgba(148, 163, 184, 0.14)' }}>
+                <span style={{ fontWeight: 700, fontSize: '14px', color: '#e2e8f0' }}>Độ Khó Máy (Bot)</span>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                  {(['EASY', 'NORMAL', 'HARD'] as BotDifficulty[]).map((d) => {
+                    const labels: Record<BotDifficulty, string> = { EASY: 'Dễ', NORMAL: 'Vừa', HARD: 'Khó' };
+                    const active = world.botAI.difficulty === d;
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => {
+                          setBotDiff(d);
+                          world.setBotDifficulty(d);
+                        }}
+                        style={{
+                          background: active ? '#d97706' : '#334155',
+                          color: '#fff',
+                          border: active ? '1px solid #fde047' : 'none',
+                          borderRadius: '7px',
+                          padding: '5px 10px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        {labels[d]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{ padding: '11px 0' }}>
+              <GraphicsSettingsSection theme="dark" />
+            </div>
+          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
             <button
@@ -428,6 +418,8 @@ export const StartSettingsModal: React.FC<StartSettingsModalProps> = ({
           boxSizing: 'border-box',
           backdropFilter: 'blur(12px)',
           transition: 'all 0.25s ease',
+          maxHeight: '68vh',
+          overflowY: 'auto',
         }}
       >
         {/* ========================================================= */}
@@ -903,47 +895,54 @@ export const StartSettingsModal: React.FC<StartSettingsModalProps> = ({
               CÀI ĐẶT GAME
             </h2>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '12px' }}>
-              <span style={{ fontWeight: 800, color: '#334155' }}>Âm Thanh & Nhạc Nền:</span>
-              <button
-                type="button"
-                onClick={onToggleMute}
-                style={{
-                  background: isMuted ? '#ef4444' : '#22c55e',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '6px 14px',
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                }}
-              >
-                {isMuted ? '🔇 Đang Tắt' : '🔊 Đang Bật'}
-              </button>
-            </div>
+            <div style={{ background: '#f8fafc', borderRadius: '14px', padding: '4px 14px', display: 'flex', flexDirection: 'column', textAlign: 'left' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid rgba(15, 23, 42, 0.08)' }}>
+                <span style={{ fontWeight: 800, fontSize: '14px', color: '#334155' }}>Âm Thanh & Nhạc Nền</span>
+                <button
+                  type="button"
+                  onClick={onToggleMute}
+                  style={{
+                    background: isMuted ? '#ef4444' : '#22c55e',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '6px 14px',
+                    fontWeight: 800,
+                    fontSize: '12.5px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {isMuted ? '🔇 Đang Tắt' : '🔊 Đang Bật'}
+                </button>
+              </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '12px' }}>
-              <span style={{ fontWeight: 800, color: '#334155' }}>Tốc Độ Trận Đấu:</span>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                {[1.0, 1.5, 2.0].map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => onSetSpeed(s)}
-                    style={{
-                      background: speed === s ? '#2563eb' : '#e2e8f0',
-                      color: speed === s ? '#fff' : '#0f172a',
-                      border: 'none',
-                      borderRadius: '6px',
-                      padding: '6px 10px',
-                      fontWeight: 800,
-                      cursor: 'pointer',
-                      fontSize: '12px',
-                    }}
-                  >
-                    {s}x
-                  </button>
-                ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid rgba(15, 23, 42, 0.08)' }}>
+                <span style={{ fontWeight: 800, fontSize: '14px', color: '#334155' }}>Tốc Độ Trận Đấu</span>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                  {[1.0, 1.5, 2.0].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => onSetSpeed(s)}
+                      style={{
+                        background: speed === s ? '#2563eb' : '#e2e8f0',
+                        color: speed === s ? '#fff' : '#0f172a',
+                        border: 'none',
+                        borderRadius: '7px',
+                        padding: '5px 10px',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                      }}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ padding: '11px 0' }}>
+                <GraphicsSettingsSection theme="light" />
               </div>
             </div>
 
